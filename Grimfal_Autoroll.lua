@@ -108,6 +108,38 @@ local function ResolveSpellEntry(spellID, name, icon)
     }
 end
 
+local function GetSpellLinkForEntry(entry)
+    if not entry then
+        return nil
+    end
+
+    if entry.spellID then
+        local spellLink = GetSpellLink(entry.spellID)
+        if spellLink then
+            return spellLink
+        end
+    end
+
+    if entry.name and entry.name ~= "" then
+        return GetSpellLink(entry.name)
+    end
+
+    return nil
+end
+
+local function TryInsertSpellLink(entry)
+    if not entry or not IsModifiedClick("CHATLINK") then
+        return false
+    end
+
+    local spellLink = GetSpellLinkForEntry(entry)
+    if not spellLink then
+        return false
+    end
+
+    return ChatEdit_InsertLink(spellLink)
+end
+
 local function EnsureSavedVariables()
     if type(GFAR_Saved) ~= "table" then
         GFAR_Saved = {}
@@ -593,7 +625,7 @@ local function CreateSpellPicker()
 
     picker.subtitle = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     picker.subtitle:SetPoint("TOP", picker.title, "BOTTOM", 0, -8)
-    picker.subtitle:SetText("Filter by spell name. Click a result to assign it.")
+    picker.subtitle:SetText("Filter by spell name. Click to assign, Shift-click to link in chat.")
 
     picker.closeButton = CreateFrame("Button", nil, picker, "UIPanelCloseButton")
     picker.closeButton:SetPoint("TOPRIGHT", picker, "TOPRIGHT", -4, -4)
@@ -650,7 +682,15 @@ local function CreateSpellPicker()
         row.nameText:SetJustifyH("LEFT")
 
         row:SetScript("OnClick", function(self)
-            if not self.entry or not picker.activeSlotIndex then
+            if not self.entry then
+                return
+            end
+
+            if TryInsertSpellLink(self.entry) then
+                return
+            end
+
+            if not picker.activeSlotIndex then
                 return
             end
 
@@ -666,6 +706,7 @@ local function CreateSpellPicker()
 
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetHyperlink("spell:" .. self.entry.spellID)
+            GameTooltip:AddLine("Left-click to assign. Shift-click to link in chat.", 0.8, 0.8, 0.8, true)
             GameTooltip:Show()
         end)
 
