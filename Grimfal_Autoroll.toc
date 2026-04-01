@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Grimfall Autoroll
+## Notes: Rolls Destiny's Dice until the selected abilities are available.
+## Author: Codex
+## Version: 1.0.0
+## SavedVariables: GFAR_Saved
+
+Grimfal_Autoroll.lua
