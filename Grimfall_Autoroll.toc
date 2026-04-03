@@ -5,4 +5,4 @@
 ## Version: 1.0.0
 ## SavedVariables: GFAR_Saved
 
-Grimfal_Autoroll.lua
+Grimfall_Autoroll.lua
