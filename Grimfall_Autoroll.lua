@@ -6,6 +6,15 @@ local SPELL_SCAN_MAX_ID = 80000
 local SPELL_SCAN_CHUNK = 750
 local SPELL_SCAN_REFRESH_STEP = 4500
 local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local GAME_BOARD_WIDTH = 332
+local GAME_BOARD_HEIGHT = 222
+local GAME_PEG_RADIUS = 10
+local GAME_BALL_RADIUS = 8
+local GAME_LAUNCH_SPEED = 350
+local GAME_GRAVITY = 520
+local GAME_MAX_STEP = 0.02
+local GAME_COLLISION_COOLDOWN = 0.05
+local GAME_MIN_ORANGE = 5
 
 local GFAR = CreateFrame("Frame", "GFAR_EventFrame")
 GFAR:RegisterEvent("ADDON_LOADED")
@@ -24,6 +33,24 @@ GFAR.scanState = {
     nextId = 1,
     refreshProgress = 0,
 }
+GFAR.game = {
+    level = 1,
+    pegs = {},
+    aimX = GAME_BOARD_WIDTH * 0.5,
+    aimY = 84,
+    pegsRemaining = 0,
+    orangeLeft = 0,
+    boardEnabled = false,
+    refreshElapsed = 0,
+    ball = {
+        active = false,
+        x = GAME_BOARD_WIDTH * 0.5,
+        y = 18,
+        vx = 0,
+        vy = 0,
+        collisionCooldown = 0,
+    },
+}
 
 local defaults = {
     abilities = { nil, nil, nil, nil },
@@ -41,6 +68,11 @@ local ApplySpellFilter
 local UpdateSpellList
 local RefreshPickerStatus
 local StartSpellCatalogScan
+local CreatePeggleBoard
+local GeneratePeggleLevel
+local UpdatePeggleInfo
+local UpdatePeggleAim
+local StartPeggleShot
 
 local function Print(message)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99GFAR|r: " .. message)
@@ -55,6 +87,23 @@ end
 
 local function NormalizeName(text)
     return string.lower(Trim(text))
+end
+
+local function Clamp(value, minimum, maximum)
+    if value < minimum then
+        return minimum
+    end
+
+    if value > maximum then
+        return maximum
+    end
+
+    return value
+end
+
+local function Noise(level, index, salt)
+    local value = math.sin((level * 97.13) + (index * 57.29) + (salt * 17.71)) * 43758.5453
+    return value - math.floor(value)
 end
 
 local function GetItemIdFromLink(itemLink)
@@ -272,6 +321,19 @@ local function FindDiceInBags()
     return nil, nil
 end
 
+local function IsDiceOnCooldown()
+    local startTime, duration, enable = GetItemCooldown(ITEM_ID)
+    if enable == 0 or not startTime or not duration then
+        return false
+    end
+
+    if startTime <= 0 or duration <= 0 then
+        return false
+    end
+
+    return ((startTime + duration) - GetTime()) > 0.15
+end
+
 local function SaveFramePosition(frame)
     local point, _, relativePoint, x, y = frame:GetPoint(1)
     GFAR_Saved.position.point = point
@@ -333,33 +395,42 @@ local function RefreshAbilitySlots()
 end
 
 local function UpdateButtonState()
-    if not GFAR.rollButton then
+    if not GFAR.gameBoard then
         return
     end
 
     local configured, _, missing = GetAbilityProgress()
     local bag, slot = FindDiceInBags()
+    local canShoot = false
+    local message = "Aim with the cursor and click the board to shoot Destiny's Dice."
 
     if #configured == 0 then
-        GFAR.rollButton:Disable()
-        GFAR.rollButton:SetText("Roll")
-        return
+        message = "Choose 1 to 4 abilities before taking a shot."
+    elseif #missing == 0 then
+        message = "All requested abilities are already active. No shot needed."
+    elseif not bag or not slot then
+        message = "Destiny's Dice is missing from your bags."
+    elseif GFAR.game.ball.active then
+        message = "Ball in play. Wait for it to drain before clicking again."
+    elseif IsDiceOnCooldown() then
+        message = "Destiny's Dice is on cooldown."
+    else
+        canShoot = true
     end
 
-    if #missing == 0 then
-        GFAR.rollButton:Disable()
-        GFAR.rollButton:SetText("Done")
-        return
+    GFAR.game.boardEnabled = canShoot
+
+    if canShoot then
+        GFAR.gameBoard:Enable()
+        GFAR.gameBoard:SetBackdropBorderColor(0.85, 0.72, 0.3, 1)
+    else
+        GFAR.gameBoard:Disable()
+        GFAR.gameBoard:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
     end
 
-    if not bag or not slot then
-        GFAR.rollButton:Disable()
-        GFAR.rollButton:SetText("No Dice")
-        return
+    if GFAR.boardPromptText then
+        GFAR.boardPromptText:SetText(message)
     end
-
-    GFAR.rollButton:Enable()
-    GFAR.rollButton:SetText("Roll")
 end
 
 UpdateStatus = function()
@@ -368,7 +439,7 @@ UpdateStatus = function()
     RefreshAbilitySlots()
 
     if #configured == 0 then
-        SetStatusText("Choose 1 to 4 abilities, then click Roll.")
+        SetStatusText("Choose 1 to 4 abilities, then click the Peggle board.")
         SetMatchText("Found: none")
         UpdateButtonState()
         return
@@ -394,6 +465,366 @@ UpdateStatus = function()
         SetMatchText("Found: none")
     end
 
+    UpdateButtonState()
+end
+
+local function SetBoardRegionPoint(board, region, x, y)
+    region:ClearAllPoints()
+    region:SetPoint("CENTER", board, "TOPLEFT", x, -y)
+end
+
+local function GetPegColor(isOrange)
+    if isOrange then
+        return 1.0, 0.48, 0.12
+    end
+
+    return 0.18, 0.72, 1.0
+end
+
+local function HidePegVisual(visual)
+    visual.glow:Hide()
+    visual.core:Hide()
+    visual.highlight:Hide()
+end
+
+local function AcquirePegVisual(board, index)
+    if board.pegPool[index] then
+        return board.pegPool[index]
+    end
+
+    local visual = {}
+
+    visual.glow = board:CreateTexture(nil, "BACKGROUND")
+    visual.glow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.glow:SetWidth(26)
+    visual.glow:SetHeight(26)
+    visual.glow:SetBlendMode("ADD")
+
+    visual.core = board:CreateTexture(nil, "ARTWORK")
+    visual.core:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.core:SetWidth(14)
+    visual.core:SetHeight(14)
+
+    visual.highlight = board:CreateTexture(nil, "OVERLAY")
+    visual.highlight:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.highlight:SetWidth(6)
+    visual.highlight:SetHeight(6)
+    visual.highlight:SetVertexColor(1, 1, 1, 0.9)
+
+    board.pegPool[index] = visual
+    return visual
+end
+
+local function SetPegVisual(board, peg, index)
+    local visual = AcquirePegVisual(board, index)
+    local red, green, blue = GetPegColor(peg.isOrange)
+
+    peg.visual = visual
+    SetBoardRegionPoint(board, visual.glow, peg.x, peg.y)
+    SetBoardRegionPoint(board, visual.core, peg.x, peg.y)
+    SetBoardRegionPoint(board, visual.highlight, peg.x - 3, peg.y - 3)
+
+    visual.glow:SetVertexColor(red, green, blue, 0.42)
+    visual.core:SetVertexColor(red, green, blue, 0.95)
+    visual.highlight:Show()
+    visual.glow:Show()
+    visual.core:Show()
+end
+
+local function HideAllPegVisuals(board)
+    for _, visual in ipairs(board.pegPool) do
+        HidePegVisual(visual)
+    end
+end
+
+local function SetBallPosition(board, ball)
+    SetBoardRegionPoint(board, board.ballGlow, ball.x, ball.y)
+    SetBoardRegionPoint(board, board.ballTexture, ball.x, ball.y)
+    SetBoardRegionPoint(board, board.ballSpark, ball.x - 3, ball.y - 3)
+end
+
+local function SetPegHit(peg)
+    peg.hit = true
+    if peg.visual then
+        HidePegVisual(peg.visual)
+    end
+end
+
+UpdatePeggleInfo = function(message)
+    if not GFAR.courseText then
+        return
+    end
+
+    local game = GFAR.game
+    local summary = string.format("Course %d | Orange %d | Pegs %d", game.level, game.orangeLeft, game.pegsRemaining)
+    GFAR.courseText:SetText(summary)
+
+    if GFAR.courseHintText then
+        GFAR.courseHintText:SetText(message or "Aim with the cursor and click the board to shoot Destiny's Dice.")
+    end
+end
+
+local function StopPeggleBall(message)
+    local game = GFAR.game
+    game.ball.active = false
+    GFAR.gameBoard.ballTexture:Hide()
+    GFAR.gameBoard.ballGlow:Hide()
+    GFAR.gameBoard.ballSpark:Hide()
+
+    if game.orangeLeft <= 0 or game.pegsRemaining <= 0 then
+        GeneratePeggleLevel(game.level + 1)
+        UpdatePeggleInfo("Course cleared. A new procedurally generated board is ready.")
+    else
+        UpdatePeggleInfo(message or "Shot drained. Line up the next autoroll shot.")
+        UpdateButtonState()
+    end
+end
+
+local function UpdatePeggleBall(elapsed)
+    local board = GFAR.gameBoard
+    local game = GFAR.game
+    local ball = game.ball
+
+    if not board or not ball.active then
+        return
+    end
+
+    local remaining = elapsed
+
+    while remaining > 0 do
+        local step = remaining
+        if step > GAME_MAX_STEP then
+            step = GAME_MAX_STEP
+        end
+        remaining = remaining - step
+
+        ball.collisionCooldown = math.max(0, ball.collisionCooldown - step)
+        ball.vy = ball.vy + (GAME_GRAVITY * step)
+        ball.x = ball.x + (ball.vx * step)
+        ball.y = ball.y + (ball.vy * step)
+
+        if ball.x < GAME_BALL_RADIUS then
+            ball.x = GAME_BALL_RADIUS
+            ball.vx = math.abs(ball.vx)
+        elseif ball.x > GAME_BOARD_WIDTH - GAME_BALL_RADIUS then
+            ball.x = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
+            ball.vx = -math.abs(ball.vx)
+        end
+
+        if ball.y < GAME_BALL_RADIUS then
+            ball.y = GAME_BALL_RADIUS
+            ball.vy = math.abs(ball.vy)
+        end
+
+        if ball.collisionCooldown <= 0 then
+            for _, peg in ipairs(game.pegs) do
+                if not peg.hit then
+                    local dx = ball.x - peg.x
+                    local dy = ball.y - peg.y
+                    local distanceSquared = (dx * dx) + (dy * dy)
+                    local minimumDistance = GAME_BALL_RADIUS + GAME_PEG_RADIUS
+
+                    if distanceSquared <= (minimumDistance * minimumDistance) then
+                        local distance = math.sqrt(distanceSquared)
+                        local nx
+                        local ny
+
+                        if distance < 0.001 then
+                            nx = 0
+                            ny = 1
+                        else
+                            nx = dx / distance
+                            ny = dy / distance
+                        end
+
+                        local dot = (ball.vx * nx) + (ball.vy * ny)
+                        if dot < 0 then
+                            ball.vx = ball.vx - (2 * dot * nx)
+                            ball.vy = ball.vy - (2 * dot * ny)
+                        else
+                            ball.vx = ball.vx + (nx * 80)
+                            ball.vy = ball.vy + (ny * 80)
+                        end
+
+                        local speed = math.sqrt((ball.vx * ball.vx) + (ball.vy * ball.vy))
+                        if speed < (GAME_LAUNCH_SPEED * 0.7) then
+                            local multiplier = (GAME_LAUNCH_SPEED * 0.7) / math.max(speed, 1)
+                            ball.vx = ball.vx * multiplier
+                            ball.vy = ball.vy * multiplier
+                        end
+
+                        ball.x = peg.x + (nx * (minimumDistance + 1))
+                        ball.y = peg.y + (ny * (minimumDistance + 1))
+                        ball.collisionCooldown = GAME_COLLISION_COOLDOWN
+
+                        SetPegHit(peg)
+                        game.pegsRemaining = game.pegsRemaining - 1
+                        if peg.isOrange then
+                            game.orangeLeft = game.orangeLeft - 1
+                        end
+
+                        UpdatePeggleInfo("Peg smashed. Keep shooting until the requested skills land.")
+                        break
+                    end
+                end
+            end
+        end
+
+        if ball.y > (GAME_BOARD_HEIGHT + GAME_BALL_RADIUS + 4) then
+            StopPeggleBall()
+            return
+        end
+    end
+
+    SetBallPosition(board, ball)
+end
+
+UpdatePeggleAim = function(board)
+    local left = board:GetLeft()
+    local top = board:GetTop()
+    if not left or not top then
+        return
+    end
+
+    local scale = board:GetEffectiveScale()
+    local cursorX, cursorY = GetCursorPosition()
+    local localX = (cursorX / scale) - left
+    local localY = top - (cursorY / scale)
+
+    GFAR.game.aimX = Clamp(localX, 18, GAME_BOARD_WIDTH - 18)
+    GFAR.game.aimY = Clamp(localY, 46, GAME_BOARD_HEIGHT - 18)
+
+    SetBoardRegionPoint(board, board.aimHorizontal, GFAR.game.aimX, GFAR.game.aimY)
+    SetBoardRegionPoint(board, board.aimVertical, GFAR.game.aimX, GFAR.game.aimY)
+    SetBoardRegionPoint(board, board.aimDot, GFAR.game.aimX, GFAR.game.aimY)
+end
+
+local function BuildFallbackPegRow(board, level, startIndex)
+    local game = GFAR.game
+    local step = (GAME_BOARD_WIDTH - 72) / 5
+
+    for column = 0, 5 do
+        local pegIndex = startIndex + column
+        local peg = {
+            x = 36 + (column * step),
+            y = 118 + ((Noise(level, pegIndex, 14) - 0.5) * 18),
+            isOrange = column == 1 or column == 4,
+            hit = false,
+        }
+
+        table.insert(game.pegs, peg)
+        SetPegVisual(board, peg, #game.pegs)
+    end
+end
+
+GeneratePeggleLevel = function(level)
+    local board = GFAR.gameBoard
+    if not board then
+        return
+    end
+
+    local game = GFAR.game
+    local rowCount = 5 + math.floor(Noise(level, 1, 1) * 3)
+    local orangeAssigned = 0
+
+    HideAllPegVisuals(board)
+    wipe(game.pegs)
+    game.level = level
+    game.ball.active = false
+    board.ballTexture:Hide()
+    board.ballGlow:Hide()
+    board.ballSpark:Hide()
+
+    for row = 1, rowCount do
+        local columns = 5 + math.floor(Noise(level, row, 2) * 4)
+        local verticalSpace = (GAME_BOARD_HEIGHT - 94) / math.max(1, rowCount - 1)
+        local rowY = 60 + ((row - 1) * verticalSpace)
+        local rowShift = (Noise(level, row, 3) - 0.5) * 28
+
+        for column = 1, columns do
+            local presenceRoll = Noise(level, (row * 100) + column, 4)
+            if presenceRoll > 0.15 or columns <= 5 then
+                local step = (GAME_BOARD_WIDTH - 52) / math.max(1, columns - 1)
+                local peg = {
+                    x = Clamp(26 + ((column - 1) * step) + rowShift + ((Noise(level, (row * 100) + column, 5) - 0.5) * 18), 20, GAME_BOARD_WIDTH - 20),
+                    y = Clamp(rowY + ((Noise(level, (row * 100) + column, 6) - 0.5) * 16), 54, GAME_BOARD_HEIGHT - 18),
+                    isOrange = Noise(level, (row * 100) + column, 7) > 0.7,
+                    hit = false,
+                }
+
+                if peg.isOrange then
+                    orangeAssigned = orangeAssigned + 1
+                end
+
+                table.insert(game.pegs, peg)
+            end
+        end
+    end
+
+    if #game.pegs < 15 then
+        BuildFallbackPegRow(board, level, #game.pegs + 1)
+    end
+
+    if orangeAssigned < GAME_MIN_ORANGE then
+        for pegIndex, peg in ipairs(game.pegs) do
+            if orangeAssigned >= GAME_MIN_ORANGE then
+                break
+            end
+
+            if not peg.isOrange and Noise(level, pegIndex, 8) > 0.45 then
+                peg.isOrange = true
+                orangeAssigned = orangeAssigned + 1
+            end
+        end
+    end
+
+    for pegIndex, peg in ipairs(game.pegs) do
+        SetPegVisual(board, peg, pegIndex)
+    end
+
+    game.pegsRemaining = #game.pegs
+    game.orangeLeft = 0
+    for _, peg in ipairs(game.pegs) do
+        if peg.isOrange then
+            game.orangeLeft = game.orangeLeft + 1
+        end
+    end
+
+    UpdatePeggleAim(board)
+    UpdatePeggleInfo("New procedurally generated course loaded.")
+    UpdateButtonState()
+end
+
+StartPeggleShot = function()
+    local board = GFAR.gameBoard
+    local game = GFAR.game
+
+    if not board or game.ball.active or not game.boardEnabled then
+        return
+    end
+
+    local spawnX = GAME_BOARD_WIDTH * 0.5
+    local spawnY = 18
+    local dx = game.aimX - spawnX
+    local dy = math.max(game.aimY - spawnY, 30)
+    local distance = math.sqrt((dx * dx) + (dy * dy))
+    if distance < 0.001 then
+        distance = 1
+    end
+
+    game.ball.active = true
+    game.ball.x = spawnX
+    game.ball.y = spawnY
+    game.ball.vx = (dx / distance) * GAME_LAUNCH_SPEED
+    game.ball.vy = (dy / distance) * GAME_LAUNCH_SPEED
+    game.ball.collisionCooldown = 0
+
+    SetBallPosition(board, game.ball)
+    board.ballGlow:Show()
+    board.ballTexture:Show()
+    board.ballSpark:Show()
+
+    UpdatePeggleInfo("Ball in play. The click also consumed Destiny's Dice.")
     UpdateButtonState()
 end
 
@@ -756,10 +1187,135 @@ OpenSpellPicker = function(slotIndex)
     ApplySpellFilter()
 end
 
+CreatePeggleBoard = function(parent)
+    local board = CreateFrame("Button", "GFAR_PeggleBoard", parent, "SecureActionButtonTemplate")
+    board:SetWidth(GAME_BOARD_WIDTH)
+    board:SetHeight(GAME_BOARD_HEIGHT)
+    board:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, -84)
+    board:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 8,
+        edgeSize = 12,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    board:SetBackdropColor(0.03, 0.05, 0.1, 0.96)
+    board:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+    board:RegisterForClicks("LeftButtonUp")
+    board:SetAttribute("type", "item")
+    board:SetAttribute("item", "item:" .. ITEM_ID)
+    board.pegPool = {}
+
+    board.gridLineHorizontal = board:CreateTexture(nil, "BACKGROUND")
+    board.gridLineHorizontal:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.gridLineHorizontal:SetVertexColor(0.1, 0.2, 0.35, 0.4)
+    board.gridLineHorizontal:SetPoint("TOPLEFT", board, "TOPLEFT", 12, -48)
+    board.gridLineHorizontal:SetPoint("TOPRIGHT", board, "TOPRIGHT", -12, -48)
+    board.gridLineHorizontal:SetHeight(1)
+
+    board.gridLineVertical = board:CreateTexture(nil, "BACKGROUND")
+    board.gridLineVertical:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.gridLineVertical:SetVertexColor(0.1, 0.2, 0.35, 0.35)
+    board.gridLineVertical:SetPoint("TOP", board, "TOP", 0, -18)
+    board.gridLineVertical:SetPoint("BOTTOM", board, "BOTTOM", 0, 18)
+    board.gridLineVertical:SetWidth(1)
+
+    board.launchPadGlow = board:CreateTexture(nil, "ARTWORK")
+    board.launchPadGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.launchPadGlow:SetWidth(30)
+    board.launchPadGlow:SetHeight(30)
+    board.launchPadGlow:SetVertexColor(1.0, 0.78, 0.28, 0.32)
+    SetBoardRegionPoint(board, board.launchPadGlow, GAME_BOARD_WIDTH * 0.5, 18)
+
+    board.launchPad = board:CreateTexture(nil, "ARTWORK")
+    board.launchPad:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.launchPad:SetWidth(12)
+    board.launchPad:SetHeight(12)
+    board.launchPad:SetVertexColor(1.0, 0.84, 0.32, 1)
+    SetBoardRegionPoint(board, board.launchPad, GAME_BOARD_WIDTH * 0.5, 18)
+
+    board.aimHorizontal = board:CreateTexture(nil, "OVERLAY")
+    board.aimHorizontal:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.aimHorizontal:SetWidth(18)
+    board.aimHorizontal:SetHeight(2)
+    board.aimHorizontal:SetVertexColor(1.0, 0.88, 0.42, 0.9)
+
+    board.aimVertical = board:CreateTexture(nil, "OVERLAY")
+    board.aimVertical:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.aimVertical:SetWidth(2)
+    board.aimVertical:SetHeight(18)
+    board.aimVertical:SetVertexColor(1.0, 0.88, 0.42, 0.9)
+
+    board.aimDot = board:CreateTexture(nil, "OVERLAY")
+    board.aimDot:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.aimDot:SetWidth(6)
+    board.aimDot:SetHeight(6)
+    board.aimDot:SetVertexColor(1.0, 0.92, 0.48, 1)
+
+    board.ballGlow = board:CreateTexture(nil, "OVERLAY")
+    board.ballGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballGlow:SetWidth(20)
+    board.ballGlow:SetHeight(20)
+    board.ballGlow:SetBlendMode("ADD")
+    board.ballGlow:SetVertexColor(1, 1, 1, 0.38)
+    board.ballGlow:Hide()
+
+    board.ballTexture = board:CreateTexture(nil, "OVERLAY")
+    board.ballTexture:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballTexture:SetWidth(12)
+    board.ballTexture:SetHeight(12)
+    board.ballTexture:SetVertexColor(1, 1, 1, 1)
+    board.ballTexture:Hide()
+
+    board.ballSpark = board:CreateTexture(nil, "OVERLAY")
+    board.ballSpark:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballSpark:SetWidth(4)
+    board.ballSpark:SetHeight(4)
+    board.ballSpark:SetVertexColor(1, 0.95, 0.65, 0.9)
+    board.ballSpark:Hide()
+
+    board:SetScript("OnEnter", function(self)
+        UpdatePeggleAim(self)
+
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Autoroll Peggle", 1, 1, 1)
+        GameTooltip:AddLine("Click the board to launch a ball and use Destiny's Dice.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Procedural layouts refresh when you clear a course or click New Course.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    board:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    board:SetScript("OnUpdate", function(self, elapsed)
+        GFAR.game.refreshElapsed = GFAR.game.refreshElapsed + elapsed
+        if GFAR.game.refreshElapsed >= 0.2 then
+            GFAR.game.refreshElapsed = 0
+            if GFAR.mainFrame and GFAR.mainFrame:IsShown() then
+                UpdateButtonState()
+            end
+        end
+
+        if self:IsMouseOver() and not GFAR.game.ball.active then
+            UpdatePeggleAim(self)
+        end
+
+        UpdatePeggleBall(elapsed)
+    end)
+    board:SetScript("PostClick", function(self)
+        UpdatePeggleAim(self)
+        StartPeggleShot()
+        UpdateStatus()
+    end)
+
+    GFAR.gameBoard = board
+    return board
+end
+
 local function CreateMainFrame()
     local frame = CreateFrame("Frame", "GFAR_MainFrame", UIParent)
     frame:SetWidth(390)
-    frame:SetHeight(400)
+    frame:SetHeight(618)
     frame:SetPoint(
         GFAR_Saved.position.point,
         UIParent,
@@ -793,17 +1349,37 @@ local function CreateMainFrame()
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     frame.subtitle:SetPoint("TOP", frame.title, "BOTTOM", 0, -8)
-    frame.subtitle:SetText("Click a square to choose a spell. Right-click to clear.")
+    frame.subtitle:SetText("Choose target abilities, then click the Peggle board to fire Destiny's Dice.")
 
     frame.closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     frame.closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+
+    frame.gameBoard = CreatePeggleBoard(frame)
+
+    frame.boardPromptText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.boardPromptText:SetWidth(328)
+    frame.boardPromptText:SetHeight(30)
+    frame.boardPromptText:SetJustifyH("LEFT")
+    frame.boardPromptText:SetPoint("TOPLEFT", frame.gameBoard, "BOTTOMLEFT", 2, -10)
+
+    frame.courseText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    frame.courseText:SetPoint("TOPLEFT", frame.boardPromptText, "BOTTOMLEFT", 0, -8)
+    frame.courseText:SetWidth(328)
+    frame.courseText:SetJustifyH("LEFT")
+
+    frame.courseHintText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    frame.courseHintText:SetPoint("TOPLEFT", frame.courseText, "BOTTOMLEFT", 0, -4)
+    frame.courseHintText:SetWidth(328)
+    frame.courseHintText:SetHeight(28)
+    frame.courseHintText:SetJustifyH("LEFT")
+    frame.courseHintText:SetJustifyV("TOP")
 
     frame.slots = {}
     for index = 1, MAX_SLOTS do
         local slotFrame = CreateAbilitySlot(frame, index)
 
         if index == 1 then
-            slotFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 28, -84)
+            slotFrame:SetPoint("TOPLEFT", frame.courseHintText, "BOTTOMLEFT", 0, -18)
         elseif index == 2 then
             slotFrame:SetPoint("TOPLEFT", frame.slots[1], "TOPRIGHT", 28, 0)
         elseif index == 3 then
@@ -815,15 +1391,13 @@ local function CreateMainFrame()
         frame.slots[index] = slotFrame
     end
 
-    frame.rollButton = CreateFrame("Button", "GFAR_RollButton", frame, "SecureActionButtonTemplate,UIPanelButtonTemplate")
-    frame.rollButton:SetWidth(120)
-    frame.rollButton:SetHeight(24)
-    frame.rollButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 28, 30)
-    frame.rollButton:SetAttribute("type", "item")
-    frame.rollButton:SetAttribute("item", "item:" .. ITEM_ID)
-    frame.rollButton:RegisterForClicks("AnyUp")
-    frame.rollButton:SetScript("PostClick", function()
-        UpdateStatus()
+    frame.newCourseButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.newCourseButton:SetWidth(120)
+    frame.newCourseButton:SetHeight(24)
+    frame.newCourseButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 28, 30)
+    frame.newCourseButton:SetText("New Course")
+    frame.newCourseButton:SetScript("OnClick", function()
+        GeneratePeggleLevel(GFAR.game.level + 1)
     end)
 
     frame.statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -831,19 +1405,22 @@ local function CreateMainFrame()
     frame.statusText:SetHeight(36)
     frame.statusText:SetJustifyH("LEFT")
     frame.statusText:SetJustifyV("TOP")
-    frame.statusText:SetPoint("BOTTOMLEFT", frame.rollButton, "TOPLEFT", 0, 40)
+    frame.statusText:SetPoint("BOTTOMLEFT", frame.newCourseButton, "TOPLEFT", 0, 40)
 
     frame.matchText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.matchText:SetWidth(320)
     frame.matchText:SetHeight(18)
     frame.matchText:SetJustifyH("LEFT")
-    frame.matchText:SetPoint("BOTTOMLEFT", frame.rollButton, "TOPLEFT", 0, 16)
+    frame.matchText:SetPoint("BOTTOMLEFT", frame.newCourseButton, "TOPLEFT", 0, 16)
 
     GFAR.mainFrame = frame
-    GFAR.rollButton = frame.rollButton
     GFAR.statusText = frame.statusText
     GFAR.matchText = frame.matchText
+    GFAR.boardPromptText = frame.boardPromptText
+    GFAR.courseText = frame.courseText
+    GFAR.courseHintText = frame.courseHintText
 
+    GeneratePeggleLevel(1)
     UpdateStatus()
 end
 
