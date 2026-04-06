@@ -8,8 +8,8 @@ local SPELL_SCAN_REFRESH_STEP = 4500
 local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local GAME_BOARD_WIDTH = 332
 local GAME_BOARD_HEIGHT = 222
-local GAME_PEG_RADIUS = 10
-local GAME_BALL_RADIUS = 8
+local GAME_PEG_RADIUS = 5
+local GAME_BALL_RADIUS = 4
 local GAME_LAUNCH_SPEED = 350
 local GAME_GRAVITY = 520
 local GAME_MAX_STEP = 0.02
@@ -496,19 +496,19 @@ local function AcquirePegVisual(board, index)
 
     visual.glow = board:CreateTexture(nil, "BACKGROUND")
     visual.glow:SetTexture("Interface\\Buttons\\WHITE8x8")
-    visual.glow:SetWidth(26)
-    visual.glow:SetHeight(26)
+    visual.glow:SetWidth(13)
+    visual.glow:SetHeight(13)
     visual.glow:SetBlendMode("ADD")
 
     visual.core = board:CreateTexture(nil, "ARTWORK")
     visual.core:SetTexture("Interface\\Buttons\\WHITE8x8")
-    visual.core:SetWidth(14)
-    visual.core:SetHeight(14)
+    visual.core:SetWidth(7)
+    visual.core:SetHeight(7)
 
     visual.highlight = board:CreateTexture(nil, "OVERLAY")
     visual.highlight:SetTexture("Interface\\Buttons\\WHITE8x8")
-    visual.highlight:SetWidth(6)
-    visual.highlight:SetHeight(6)
+    visual.highlight:SetWidth(3)
+    visual.highlight:SetHeight(3)
     visual.highlight:SetVertexColor(1, 1, 1, 0.9)
 
     board.pegPool[index] = visual
@@ -522,7 +522,7 @@ local function SetPegVisual(board, peg, index)
     peg.visual = visual
     SetBoardRegionPoint(board, visual.glow, peg.x, peg.y)
     SetBoardRegionPoint(board, visual.core, peg.x, peg.y)
-    SetBoardRegionPoint(board, visual.highlight, peg.x - 3, peg.y - 3)
+    SetBoardRegionPoint(board, visual.highlight, peg.x - 1.5, peg.y - 1.5)
 
     visual.glow:SetVertexColor(red, green, blue, 0.42)
     visual.core:SetVertexColor(red, green, blue, 0.95)
@@ -1255,23 +1255,23 @@ CreatePeggleBoard = function(parent)
 
     board.ballGlow = board:CreateTexture(nil, "OVERLAY")
     board.ballGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
-    board.ballGlow:SetWidth(20)
-    board.ballGlow:SetHeight(20)
+    board.ballGlow:SetWidth(10)
+    board.ballGlow:SetHeight(10)
     board.ballGlow:SetBlendMode("ADD")
     board.ballGlow:SetVertexColor(1, 1, 1, 0.38)
     board.ballGlow:Hide()
 
     board.ballTexture = board:CreateTexture(nil, "OVERLAY")
     board.ballTexture:SetTexture("Interface\\Buttons\\WHITE8x8")
-    board.ballTexture:SetWidth(12)
-    board.ballTexture:SetHeight(12)
+    board.ballTexture:SetWidth(6)
+    board.ballTexture:SetHeight(6)
     board.ballTexture:SetVertexColor(1, 1, 1, 1)
     board.ballTexture:Hide()
 
     board.ballSpark = board:CreateTexture(nil, "OVERLAY")
     board.ballSpark:SetTexture("Interface\\Buttons\\WHITE8x8")
-    board.ballSpark:SetWidth(4)
-    board.ballSpark:SetHeight(4)
+    board.ballSpark:SetWidth(2)
+    board.ballSpark:SetHeight(2)
     board.ballSpark:SetVertexColor(1, 0.95, 0.65, 0.9)
     board.ballSpark:Hide()
 
