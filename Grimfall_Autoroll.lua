@@ -831,7 +831,7 @@ end
 local function CreateAbilitySlot(parent, index)
     local slotFrame = CreateFrame("Frame", nil, parent)
     slotFrame:SetWidth(150)
-    slotFrame:SetHeight(72)
+    slotFrame:SetHeight(74)
     slotFrame.slotIndex = index
 
     slotFrame.label = slotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -864,8 +864,8 @@ local function CreateAbilitySlot(parent, index)
     slotFrame.highlight:SetAllPoints(slotFrame.icon)
 
     slotFrame.nameText = slotFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    slotFrame.nameText:SetWidth(94)
-    slotFrame.nameText:SetHeight(40)
+    slotFrame.nameText:SetWidth(98)
+    slotFrame.nameText:SetHeight(48)
     slotFrame.nameText:SetJustifyH("LEFT")
     slotFrame.nameText:SetJustifyV("TOP")
     slotFrame.nameText:SetPoint("TOPLEFT", slotFrame.button, "TOPRIGHT", 10, -2)
@@ -1191,7 +1191,7 @@ CreatePeggleBoard = function(parent)
     local board = CreateFrame("Button", "GFAR_PeggleBoard", parent, "SecureActionButtonTemplate")
     board:SetWidth(GAME_BOARD_WIDTH)
     board:SetHeight(GAME_BOARD_HEIGHT)
-    board:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, -84)
+    board:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, -112)
     board:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1315,7 +1315,7 @@ end
 local function CreateMainFrame()
     local frame = CreateFrame("Frame", "GFAR_MainFrame", UIParent)
     frame:SetWidth(390)
-    frame:SetHeight(618)
+    frame:SetHeight(700)
     frame:SetPoint(
         GFAR_Saved.position.point,
         UIParent,
@@ -1349,6 +1349,10 @@ local function CreateMainFrame()
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     frame.subtitle:SetPoint("TOP", frame.title, "BOTTOM", 0, -8)
+    frame.subtitle:SetWidth(332)
+    frame.subtitle:SetHeight(28)
+    frame.subtitle:SetJustifyH("CENTER")
+    frame.subtitle:SetJustifyV("TOP")
     frame.subtitle:SetText("Choose target abilities, then click the Peggle board to fire Destiny's Dice.")
 
     frame.closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -1357,20 +1361,20 @@ local function CreateMainFrame()
     frame.gameBoard = CreatePeggleBoard(frame)
 
     frame.boardPromptText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.boardPromptText:SetWidth(328)
-    frame.boardPromptText:SetHeight(30)
+    frame.boardPromptText:SetWidth(332)
+    frame.boardPromptText:SetHeight(34)
     frame.boardPromptText:SetJustifyH("LEFT")
     frame.boardPromptText:SetPoint("TOPLEFT", frame.gameBoard, "BOTTOMLEFT", 2, -10)
 
     frame.courseText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     frame.courseText:SetPoint("TOPLEFT", frame.boardPromptText, "BOTTOMLEFT", 0, -8)
-    frame.courseText:SetWidth(328)
+    frame.courseText:SetWidth(332)
     frame.courseText:SetJustifyH("LEFT")
 
     frame.courseHintText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.courseHintText:SetPoint("TOPLEFT", frame.courseText, "BOTTOMLEFT", 0, -4)
-    frame.courseHintText:SetWidth(328)
-    frame.courseHintText:SetHeight(28)
+    frame.courseHintText:SetWidth(332)
+    frame.courseHintText:SetHeight(22)
     frame.courseHintText:SetJustifyH("LEFT")
     frame.courseHintText:SetJustifyV("TOP")
 
@@ -1379,39 +1383,39 @@ local function CreateMainFrame()
         local slotFrame = CreateAbilitySlot(frame, index)
 
         if index == 1 then
-            slotFrame:SetPoint("TOPLEFT", frame.courseHintText, "BOTTOMLEFT", 0, -18)
+            slotFrame:SetPoint("TOPLEFT", frame.courseHintText, "BOTTOMLEFT", 0, -12)
         elseif index == 2 then
             slotFrame:SetPoint("TOPLEFT", frame.slots[1], "TOPRIGHT", 28, 0)
         elseif index == 3 then
-            slotFrame:SetPoint("TOPLEFT", frame.slots[1], "BOTTOMLEFT", 0, -18)
+            slotFrame:SetPoint("TOPLEFT", frame.slots[1], "BOTTOMLEFT", 0, -12)
         else
-            slotFrame:SetPoint("TOPLEFT", frame.slots[2], "BOTTOMLEFT", 0, -18)
+            slotFrame:SetPoint("TOPLEFT", frame.slots[2], "BOTTOMLEFT", 0, -12)
         end
 
         frame.slots[index] = slotFrame
     end
 
+    frame.statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.statusText:SetWidth(332)
+    frame.statusText:SetHeight(32)
+    frame.statusText:SetJustifyH("LEFT")
+    frame.statusText:SetJustifyV("TOP")
+    frame.statusText:SetPoint("TOPLEFT", frame.slots[3], "BOTTOMLEFT", 0, -2)
+
+    frame.matchText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    frame.matchText:SetWidth(332)
+    frame.matchText:SetHeight(18)
+    frame.matchText:SetJustifyH("LEFT")
+    frame.matchText:SetPoint("TOPLEFT", frame.statusText, "BOTTOMLEFT", 0, 0)
+
     frame.newCourseButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     frame.newCourseButton:SetWidth(120)
     frame.newCourseButton:SetHeight(24)
-    frame.newCourseButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 28, 30)
+    frame.newCourseButton:SetPoint("TOPLEFT", frame.matchText, "BOTTOMLEFT", 0, -4)
     frame.newCourseButton:SetText("New Course")
     frame.newCourseButton:SetScript("OnClick", function()
         GeneratePeggleLevel(GFAR.game.level + 1)
     end)
-
-    frame.statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.statusText:SetWidth(320)
-    frame.statusText:SetHeight(36)
-    frame.statusText:SetJustifyH("LEFT")
-    frame.statusText:SetJustifyV("TOP")
-    frame.statusText:SetPoint("BOTTOMLEFT", frame.newCourseButton, "TOPLEFT", 0, 40)
-
-    frame.matchText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.matchText:SetWidth(320)
-    frame.matchText:SetHeight(18)
-    frame.matchText:SetJustifyH("LEFT")
-    frame.matchText:SetPoint("BOTTOMLEFT", frame.newCourseButton, "TOPLEFT", 0, 16)
 
     GFAR.mainFrame = frame
     GFAR.statusText = frame.statusText
