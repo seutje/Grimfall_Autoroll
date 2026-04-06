@@ -102,6 +102,34 @@ local function Clamp(value, minimum, maximum)
     return value
 end
 
+local function Atan2(y, x)
+    if math.atan2 then
+        return math.atan2(y, x)
+    end
+
+    if x > 0 then
+        return math.atan(y / x)
+    end
+
+    if x < 0 and y >= 0 then
+        return math.atan(y / x) + math.pi
+    end
+
+    if x < 0 and y < 0 then
+        return math.atan(y / x) - math.pi
+    end
+
+    if y > 0 then
+        return math.pi * 0.5
+    end
+
+    if y < 0 then
+        return -math.pi * 0.5
+    end
+
+    return 0
+end
+
 local function Noise(level, index, salt)
     local value = math.sin((level * 97.13) + (index * 57.29) + (salt * 17.71)) * 43758.5453
     return value - math.floor(value)
@@ -544,6 +572,111 @@ local function SetBallPosition(board, ball)
     SetBoardRegionPoint(board, board.ballSpark, ball.x - 3, ball.y - 3)
 end
 
+local function HideAimPreview(board)
+    for _, dot in ipairs(board.aimDots) do
+        dot:Hide()
+    end
+end
+
+local function DrawAimPreviewSegment(board, startX, startY, endX, endY, startIndex, alpha)
+    local deltaX = endX - startX
+    local deltaY = endY - startY
+    local length = math.sqrt((deltaX * deltaX) + (deltaY * deltaY))
+    local dotIndex = startIndex
+    local spacing = 10
+
+    if length <= 1 then
+        return dotIndex
+    end
+
+    local steps = math.max(2, math.floor(length / spacing) + 1)
+    for step = 0, steps do
+        local t = step / steps
+        local dot = board.aimDots[dotIndex]
+        if not dot then
+            return dotIndex
+        end
+
+        SetBoardRegionPoint(board, dot, startX + (deltaX * t), startY + (deltaY * t))
+        dot:SetVertexColor(1.0, 0.92, 0.48, alpha)
+        dot:Show()
+        dotIndex = dotIndex + 1
+    end
+
+    return dotIndex
+end
+
+local function UpdateAimPreview(board)
+    local spawnX = GAME_BOARD_WIDTH * 0.5
+    local spawnY = 18
+    local deltaX = GFAR.game.aimX - spawnX
+    local deltaY = math.max(GFAR.game.aimY - spawnY, 30)
+    local distance = math.sqrt((deltaX * deltaX) + (deltaY * deltaY))
+    local directionX
+    local directionY
+    local minX = GAME_BALL_RADIUS
+    local maxX = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
+    local maxY = GAME_BOARD_HEIGHT - GAME_BALL_RADIUS
+
+    if GFAR.game.ball.active then
+        HideAimPreview(board)
+        return
+    end
+
+    if distance < 0.001 then
+        HideAimPreview(board)
+        return
+    end
+
+    HideAimPreview(board)
+
+    directionX = deltaX / distance
+    directionY = deltaY / distance
+
+    local sideTime = nil
+    if directionX > 0.001 then
+        sideTime = (maxX - spawnX) / directionX
+    elseif directionX < -0.001 then
+        sideTime = (minX - spawnX) / directionX
+    end
+
+    local bottomTime = (maxY - spawnY) / math.max(directionY, 0.001)
+    local firstTime = bottomTime
+    local bounced = false
+
+    if sideTime and sideTime > 0 and sideTime < firstTime then
+        firstTime = sideTime
+        bounced = true
+    end
+
+    local firstEndX = spawnX + (directionX * firstTime)
+    local firstEndY = spawnY + (directionY * firstTime)
+    local nextDotIndex = DrawAimPreviewSegment(board, spawnX, spawnY, firstEndX, firstEndY, 1, 0.6)
+
+    if not bounced then
+        return
+    end
+
+    directionX = -directionX
+    local secondSideTime = nil
+    if directionX > 0.001 then
+        secondSideTime = (maxX - firstEndX) / directionX
+    elseif directionX < -0.001 then
+        secondSideTime = (minX - firstEndX) / directionX
+    end
+
+    local secondBottomTime = (maxY - firstEndY) / math.max(directionY, 0.001)
+    local secondTime = secondBottomTime
+
+    if secondSideTime and secondSideTime > 0 and secondSideTime < secondTime then
+        secondTime = secondSideTime
+    end
+
+    local secondEndX = firstEndX + (directionX * secondTime)
+    local secondEndY = firstEndY + (directionY * secondTime)
+    DrawAimPreviewSegment(board, firstEndX, firstEndY, secondEndX, secondEndY, nextDotIndex, 0.35)
+end
+
 local function SetPegHit(peg)
     peg.hit = true
     if peg.visual then
@@ -698,6 +831,7 @@ UpdatePeggleAim = function(board)
     SetBoardRegionPoint(board, board.aimHorizontal, GFAR.game.aimX, GFAR.game.aimY)
     SetBoardRegionPoint(board, board.aimVertical, GFAR.game.aimX, GFAR.game.aimY)
     SetBoardRegionPoint(board, board.aimDot, GFAR.game.aimX, GFAR.game.aimY)
+    UpdateAimPreview(board)
 end
 
 local function BuildFallbackPegRow(board, level, startIndex)
@@ -824,6 +958,7 @@ StartPeggleShot = function()
     board.ballGlow:Show()
     board.ballTexture:Show()
     board.ballSpark:Show()
+    HideAimPreview(board)
 
     UpdatePeggleInfo("Ball in play. The click also consumed Destiny's Dice.")
     UpdateButtonState()
@@ -1254,6 +1389,17 @@ CreatePeggleBoard = function(parent)
     board.aimDot:SetHeight(6)
     board.aimDot:SetVertexColor(1.0, 0.92, 0.48, 1)
 
+    board.aimDots = {}
+    for dotIndex = 1, 48 do
+        local dot = board:CreateTexture(nil, "OVERLAY")
+        dot:SetTexture(CIRCLE_TEXTURE)
+        dot:SetWidth(3)
+        dot:SetHeight(3)
+        dot:SetBlendMode("ADD")
+        dot:Hide()
+        board.aimDots[dotIndex] = dot
+    end
+
     board.ballGlow = board:CreateTexture(nil, "OVERLAY")
     board.ballGlow:SetTexture(CIRCLE_TEXTURE)
     board.ballGlow:SetWidth(10)
@@ -1286,6 +1432,7 @@ CreatePeggleBoard = function(parent)
         GameTooltip:Show()
     end)
     board:SetScript("OnLeave", function()
+        HideAimPreview(board)
         GameTooltip:Hide()
     end)
     board:SetScript("OnUpdate", function(self, elapsed)
