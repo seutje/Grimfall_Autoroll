@@ -6,6 +6,7 @@ local SPELL_SCAN_MAX_ID = 80000
 local SPELL_SCAN_CHUNK = 750
 local SPELL_SCAN_REFRESH_STEP = 4500
 local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local CIRCLE_TEXTURE = "Interface\\AddOns\\Grimfall_Autoroll\\Media\\circle.tga"
 local GAME_BOARD_WIDTH = 332
 local GAME_BOARD_HEIGHT = 222
 local GAME_PEG_RADIUS = 5
@@ -495,18 +496,18 @@ local function AcquirePegVisual(board, index)
     local visual = {}
 
     visual.glow = board:CreateTexture(nil, "BACKGROUND")
-    visual.glow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.glow:SetTexture(CIRCLE_TEXTURE)
     visual.glow:SetWidth(13)
     visual.glow:SetHeight(13)
     visual.glow:SetBlendMode("ADD")
 
     visual.core = board:CreateTexture(nil, "ARTWORK")
-    visual.core:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.core:SetTexture(CIRCLE_TEXTURE)
     visual.core:SetWidth(7)
     visual.core:SetHeight(7)
 
     visual.highlight = board:CreateTexture(nil, "OVERLAY")
-    visual.highlight:SetTexture("Interface\\Buttons\\WHITE8x8")
+    visual.highlight:SetTexture(CIRCLE_TEXTURE)
     visual.highlight:SetWidth(3)
     visual.highlight:SetHeight(3)
     visual.highlight:SetVertexColor(1, 1, 1, 0.9)
@@ -1254,7 +1255,7 @@ CreatePeggleBoard = function(parent)
     board.aimDot:SetVertexColor(1.0, 0.92, 0.48, 1)
 
     board.ballGlow = board:CreateTexture(nil, "OVERLAY")
-    board.ballGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballGlow:SetTexture(CIRCLE_TEXTURE)
     board.ballGlow:SetWidth(10)
     board.ballGlow:SetHeight(10)
     board.ballGlow:SetBlendMode("ADD")
@@ -1262,14 +1263,14 @@ CreatePeggleBoard = function(parent)
     board.ballGlow:Hide()
 
     board.ballTexture = board:CreateTexture(nil, "OVERLAY")
-    board.ballTexture:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballTexture:SetTexture(CIRCLE_TEXTURE)
     board.ballTexture:SetWidth(6)
     board.ballTexture:SetHeight(6)
     board.ballTexture:SetVertexColor(1, 1, 1, 1)
     board.ballTexture:Hide()
 
     board.ballSpark = board:CreateTexture(nil, "OVERLAY")
-    board.ballSpark:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.ballSpark:SetTexture(CIRCLE_TEXTURE)
     board.ballSpark:SetWidth(2)
     board.ballSpark:SetHeight(2)
     board.ballSpark:SetVertexColor(1, 0.95, 0.65, 0.9)
