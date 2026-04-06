@@ -578,45 +578,22 @@ local function HideAimPreview(board)
     end
 end
 
-local function DrawAimPreviewSegment(board, startX, startY, endX, endY, startIndex, alpha)
-    local deltaX = endX - startX
-    local deltaY = endY - startY
-    local length = math.sqrt((deltaX * deltaX) + (deltaY * deltaY))
-    local dotIndex = startIndex
-    local spacing = 10
-
-    if length <= 1 then
-        return dotIndex
-    end
-
-    local steps = math.max(2, math.floor(length / spacing) + 1)
-    for step = 0, steps do
-        local t = step / steps
-        local dot = board.aimDots[dotIndex]
-        if not dot then
-            return dotIndex
-        end
-
-        SetBoardRegionPoint(board, dot, startX + (deltaX * t), startY + (deltaY * t))
-        dot:SetVertexColor(1.0, 0.92, 0.48, alpha)
-        dot:Show()
-        dotIndex = dotIndex + 1
-    end
-
-    return dotIndex
-end
-
 local function UpdateAimPreview(board)
     local spawnX = GAME_BOARD_WIDTH * 0.5
     local spawnY = 18
     local deltaX = GFAR.game.aimX - spawnX
     local deltaY = math.max(GFAR.game.aimY - spawnY, 30)
     local distance = math.sqrt((deltaX * deltaX) + (deltaY * deltaY))
-    local directionX
-    local directionY
-    local minX = GAME_BALL_RADIUS
-    local maxX = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
-    local maxY = GAME_BOARD_HEIGHT - GAME_BALL_RADIUS
+    local x = spawnX
+    local y = spawnY
+    local dotIndex = 1
+    local previewStep = 0.015
+    local dotInterval = 0.045
+    local dotTimer = 0
+    local elapsed = 0
+    local maxPreviewTime = 2.2
+    local bounceCount = 0
+    local collisionCooldown = 0
 
     if GFAR.game.ball.active then
         HideAimPreview(board)
@@ -630,51 +607,104 @@ local function UpdateAimPreview(board)
 
     HideAimPreview(board)
 
-    directionX = deltaX / distance
-    directionY = deltaY / distance
+    local vx = (deltaX / distance) * GAME_LAUNCH_SPEED
+    local vy = (deltaY / distance) * GAME_LAUNCH_SPEED
 
-    local sideTime = nil
-    if directionX > 0.001 then
-        sideTime = (maxX - spawnX) / directionX
-    elseif directionX < -0.001 then
-        sideTime = (minX - spawnX) / directionX
+    SetBoardRegionPoint(board, board.aimDots[dotIndex], x, y)
+    board.aimDots[dotIndex]:SetVertexColor(1.0, 0.92, 0.48, 0.6)
+    board.aimDots[dotIndex]:Show()
+    dotIndex = dotIndex + 1
+
+    while dotIndex <= #board.aimDots and elapsed < maxPreviewTime do
+        collisionCooldown = math.max(0, collisionCooldown - previewStep)
+        vy = vy + (GAME_GRAVITY * previewStep)
+        x = x + (vx * previewStep)
+        y = y + (vy * previewStep)
+        elapsed = elapsed + previewStep
+        dotTimer = dotTimer + previewStep
+
+        if x < GAME_BALL_RADIUS then
+            x = GAME_BALL_RADIUS
+            vx = math.abs(vx)
+            bounceCount = bounceCount + 1
+        elseif x > GAME_BOARD_WIDTH - GAME_BALL_RADIUS then
+            x = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
+            vx = -math.abs(vx)
+            bounceCount = bounceCount + 1
+        end
+
+        if y < GAME_BALL_RADIUS then
+            y = GAME_BALL_RADIUS
+            vy = math.abs(vy)
+        end
+
+        if collisionCooldown <= 0 then
+            for _, peg in ipairs(GFAR.game.pegs) do
+                if not peg.hit then
+                    local dx = x - peg.x
+                    local dy = y - peg.y
+                    local distanceSquared = (dx * dx) + (dy * dy)
+                    local minimumDistance = GAME_BALL_RADIUS + GAME_PEG_RADIUS
+
+                    if distanceSquared <= (minimumDistance * minimumDistance) then
+                        local pegDistance = math.sqrt(distanceSquared)
+                        local nx
+                        local ny
+
+                        if pegDistance < 0.001 then
+                            nx = 0
+                            ny = 1
+                        else
+                            nx = dx / pegDistance
+                            ny = dy / pegDistance
+                        end
+
+                        local dot = (vx * nx) + (vy * ny)
+                        if dot < 0 then
+                            vx = vx - (2 * dot * nx)
+                            vy = vy - (2 * dot * ny)
+                        else
+                            vx = vx + (nx * 80)
+                            vy = vy + (ny * 80)
+                        end
+
+                        local speed = math.sqrt((vx * vx) + (vy * vy))
+                        if speed < (GAME_LAUNCH_SPEED * 0.7) then
+                            local multiplier = (GAME_LAUNCH_SPEED * 0.7) / math.max(speed, 1)
+                            vx = vx * multiplier
+                            vy = vy * multiplier
+                        end
+
+                        x = peg.x + (nx * (minimumDistance + 1))
+                        y = peg.y + (ny * (minimumDistance + 1))
+                        bounceCount = bounceCount + 1
+                        collisionCooldown = GAME_COLLISION_COOLDOWN
+                        break
+                    end
+                end
+            end
+        end
+
+        if dotTimer >= dotInterval then
+            dotTimer = 0
+            SetBoardRegionPoint(board, board.aimDots[dotIndex], x, y)
+            if bounceCount == 0 then
+                board.aimDots[dotIndex]:SetVertexColor(1.0, 0.92, 0.48, 0.6)
+            else
+                board.aimDots[dotIndex]:SetVertexColor(1.0, 0.92, 0.48, 0.35)
+            end
+            board.aimDots[dotIndex]:Show()
+            dotIndex = dotIndex + 1
+        end
+
+        if bounceCount > 1 then
+            break
+        end
+
+        if y > (GAME_BOARD_HEIGHT - GAME_BALL_RADIUS) then
+            break
+        end
     end
-
-    local bottomTime = (maxY - spawnY) / math.max(directionY, 0.001)
-    local firstTime = bottomTime
-    local bounced = false
-
-    if sideTime and sideTime > 0 and sideTime < firstTime then
-        firstTime = sideTime
-        bounced = true
-    end
-
-    local firstEndX = spawnX + (directionX * firstTime)
-    local firstEndY = spawnY + (directionY * firstTime)
-    local nextDotIndex = DrawAimPreviewSegment(board, spawnX, spawnY, firstEndX, firstEndY, 1, 0.6)
-
-    if not bounced then
-        return
-    end
-
-    directionX = -directionX
-    local secondSideTime = nil
-    if directionX > 0.001 then
-        secondSideTime = (maxX - firstEndX) / directionX
-    elseif directionX < -0.001 then
-        secondSideTime = (minX - firstEndX) / directionX
-    end
-
-    local secondBottomTime = (maxY - firstEndY) / math.max(directionY, 0.001)
-    local secondTime = secondBottomTime
-
-    if secondSideTime and secondSideTime > 0 and secondSideTime < secondTime then
-        secondTime = secondSideTime
-    end
-
-    local secondEndX = firstEndX + (directionX * secondTime)
-    local secondEndY = firstEndY + (directionY * secondTime)
-    DrawAimPreviewSegment(board, firstEndX, firstEndY, secondEndX, secondEndY, nextDotIndex, 0.35)
 end
 
 local function SetPegHit(peg)
@@ -1390,7 +1420,7 @@ CreatePeggleBoard = function(parent)
     board.aimDot:SetVertexColor(1.0, 0.92, 0.48, 1)
 
     board.aimDots = {}
-    for dotIndex = 1, 48 do
+    for dotIndex = 1, 72 do
         local dot = board:CreateTexture(nil, "OVERLAY")
         dot:SetTexture(CIRCLE_TEXTURE)
         dot:SetWidth(3)
