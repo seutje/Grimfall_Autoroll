@@ -2,6 +2,8 @@
 
 Grimfall Autoroll is a World of Warcraft addon that rolls Destiny's Dice until your selected abilities are available.
 
+![Grimfall Autoroll screenshot](screenshot.png)
+
 ## Installation
 
 1. Download the project as a ZIP from GitHub.
