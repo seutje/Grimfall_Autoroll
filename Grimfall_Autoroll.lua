@@ -13,7 +13,7 @@ local GAME_PEG_RADIUS = 5
 local GAME_BALL_RADIUS = 4
 local GAME_LAUNCH_SPEED = 350
 local GAME_GRAVITY = 520
-local GAME_MAX_STEP = 0.02
+local GAME_PHYSICS_STEP = 0.015
 local GAME_COLLISION_COOLDOWN = 0.05
 local GAME_MIN_ORANGE = 5
 local GAME_SCORE_PER_PEG = 10
@@ -582,6 +582,81 @@ local function HideAimPreview(board)
     end
 end
 
+local function AdvancePegglePhysics(state, step, pegs)
+    local bounceCount = 0
+    local minimumDistance = GAME_BALL_RADIUS + GAME_PEG_RADIUS
+
+    state.collisionCooldown = math.max(0, state.collisionCooldown - step)
+    state.vy = state.vy + (GAME_GRAVITY * step)
+    state.x = state.x + (state.vx * step)
+    state.y = state.y + (state.vy * step)
+
+    if state.x < GAME_BALL_RADIUS then
+        state.x = GAME_BALL_RADIUS
+        state.vx = math.abs(state.vx)
+        bounceCount = bounceCount + 1
+    elseif state.x > GAME_BOARD_WIDTH - GAME_BALL_RADIUS then
+        state.x = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
+        state.vx = -math.abs(state.vx)
+        bounceCount = bounceCount + 1
+    end
+
+    if state.y < GAME_BALL_RADIUS then
+        state.y = GAME_BALL_RADIUS
+        state.vy = math.abs(state.vy)
+    end
+
+    if state.collisionCooldown > 0 then
+        return bounceCount, nil
+    end
+
+    for _, peg in ipairs(pegs) do
+        if not peg.hit then
+            local dx = state.x - peg.x
+            local dy = state.y - peg.y
+            local distanceSquared = (dx * dx) + (dy * dy)
+
+            if distanceSquared <= (minimumDistance * minimumDistance) then
+                local distance = math.sqrt(distanceSquared)
+                local nx
+                local ny
+
+                if distance < 0.001 then
+                    nx = 0
+                    ny = 1
+                else
+                    nx = dx / distance
+                    ny = dy / distance
+                end
+
+                local dot = (state.vx * nx) + (state.vy * ny)
+                if dot < 0 then
+                    state.vx = state.vx - (2 * dot * nx)
+                    state.vy = state.vy - (2 * dot * ny)
+                else
+                    state.vx = state.vx + (nx * 80)
+                    state.vy = state.vy + (ny * 80)
+                end
+
+                local speed = math.sqrt((state.vx * state.vx) + (state.vy * state.vy))
+                if speed < (GAME_LAUNCH_SPEED * 0.7) then
+                    local multiplier = (GAME_LAUNCH_SPEED * 0.7) / math.max(speed, 1)
+                    state.vx = state.vx * multiplier
+                    state.vy = state.vy * multiplier
+                end
+
+                state.x = peg.x + (nx * (minimumDistance + 1))
+                state.y = peg.y + (ny * (minimumDistance + 1))
+                state.collisionCooldown = GAME_COLLISION_COOLDOWN
+
+                return bounceCount + 1, peg
+            end
+        end
+    end
+
+    return bounceCount, nil
+end
+
 local function UpdateAimPreview(board)
     local spawnX = GAME_BOARD_WIDTH * 0.5
     local spawnY = 18
@@ -591,13 +666,14 @@ local function UpdateAimPreview(board)
     local x = spawnX
     local y = spawnY
     local dotIndex = 1
-    local previewStep = 0.015
+    local previewStep = GAME_PHYSICS_STEP
     local dotInterval = 0.045
     local dotTimer = 0
     local elapsed = 0
     local maxPreviewTime = 2.2
     local bounceCount = 0
     local collisionCooldown = 0
+    local stepState = {}
 
     if GFAR.game.ball.active then
         HideAimPreview(board)
@@ -620,74 +696,22 @@ local function UpdateAimPreview(board)
     dotIndex = dotIndex + 1
 
     while dotIndex <= #board.aimDots and elapsed < maxPreviewTime do
-        collisionCooldown = math.max(0, collisionCooldown - previewStep)
-        vy = vy + (GAME_GRAVITY * previewStep)
-        x = x + (vx * previewStep)
-        y = y + (vy * previewStep)
+        stepState.x = x
+        stepState.y = y
+        stepState.vx = vx
+        stepState.vy = vy
+        stepState.collisionCooldown = collisionCooldown
+        local stepBounces = 0
+
+        stepBounces = AdvancePegglePhysics(stepState, previewStep, GFAR.game.pegs)
+        x = stepState.x
+        y = stepState.y
+        vx = stepState.vx
+        vy = stepState.vy
+        collisionCooldown = stepState.collisionCooldown
         elapsed = elapsed + previewStep
         dotTimer = dotTimer + previewStep
-
-        if x < GAME_BALL_RADIUS then
-            x = GAME_BALL_RADIUS
-            vx = math.abs(vx)
-            bounceCount = bounceCount + 1
-        elseif x > GAME_BOARD_WIDTH - GAME_BALL_RADIUS then
-            x = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
-            vx = -math.abs(vx)
-            bounceCount = bounceCount + 1
-        end
-
-        if y < GAME_BALL_RADIUS then
-            y = GAME_BALL_RADIUS
-            vy = math.abs(vy)
-        end
-
-        if collisionCooldown <= 0 then
-            for _, peg in ipairs(GFAR.game.pegs) do
-                if not peg.hit then
-                    local dx = x - peg.x
-                    local dy = y - peg.y
-                    local distanceSquared = (dx * dx) + (dy * dy)
-                    local minimumDistance = GAME_BALL_RADIUS + GAME_PEG_RADIUS
-
-                    if distanceSquared <= (minimumDistance * minimumDistance) then
-                        local pegDistance = math.sqrt(distanceSquared)
-                        local nx
-                        local ny
-
-                        if pegDistance < 0.001 then
-                            nx = 0
-                            ny = 1
-                        else
-                            nx = dx / pegDistance
-                            ny = dy / pegDistance
-                        end
-
-                        local dot = (vx * nx) + (vy * ny)
-                        if dot < 0 then
-                            vx = vx - (2 * dot * nx)
-                            vy = vy - (2 * dot * ny)
-                        else
-                            vx = vx + (nx * 80)
-                            vy = vy + (ny * 80)
-                        end
-
-                        local speed = math.sqrt((vx * vx) + (vy * vy))
-                        if speed < (GAME_LAUNCH_SPEED * 0.7) then
-                            local multiplier = (GAME_LAUNCH_SPEED * 0.7) / math.max(speed, 1)
-                            vx = vx * multiplier
-                            vy = vy * multiplier
-                        end
-
-                        x = peg.x + (nx * (minimumDistance + 1))
-                        y = peg.y + (ny * (minimumDistance + 1))
-                        bounceCount = bounceCount + 1
-                        collisionCooldown = GAME_COLLISION_COOLDOWN
-                        break
-                    end
-                end
-            end
-        end
+        bounceCount = bounceCount + stepBounces
 
         if dotTimer >= dotInterval then
             dotTimer = 0
@@ -771,84 +795,23 @@ local function UpdatePeggleBall(elapsed)
 
     while remaining > 0 do
         local step = remaining
-        if step > GAME_MAX_STEP then
-            step = GAME_MAX_STEP
+        if step > GAME_PHYSICS_STEP then
+            step = GAME_PHYSICS_STEP
         end
         remaining = remaining - step
 
-        ball.collisionCooldown = math.max(0, ball.collisionCooldown - step)
-        ball.vy = ball.vy + (GAME_GRAVITY * step)
-        ball.x = ball.x + (ball.vx * step)
-        ball.y = ball.y + (ball.vy * step)
-
-        if ball.x < GAME_BALL_RADIUS then
-            ball.x = GAME_BALL_RADIUS
-            ball.vx = math.abs(ball.vx)
-        elseif ball.x > GAME_BOARD_WIDTH - GAME_BALL_RADIUS then
-            ball.x = GAME_BOARD_WIDTH - GAME_BALL_RADIUS
-            ball.vx = -math.abs(ball.vx)
-        end
-
-        if ball.y < GAME_BALL_RADIUS then
-            ball.y = GAME_BALL_RADIUS
-            ball.vy = math.abs(ball.vy)
-        end
-
-        if ball.collisionCooldown <= 0 then
-            for _, peg in ipairs(game.pegs) do
-                if not peg.hit then
-                    local dx = ball.x - peg.x
-                    local dy = ball.y - peg.y
-                    local distanceSquared = (dx * dx) + (dy * dy)
-                    local minimumDistance = GAME_BALL_RADIUS + GAME_PEG_RADIUS
-
-                    if distanceSquared <= (minimumDistance * minimumDistance) then
-                        local distance = math.sqrt(distanceSquared)
-                        local nx
-                        local ny
-
-                        if distance < 0.001 then
-                            nx = 0
-                            ny = 1
-                        else
-                            nx = dx / distance
-                            ny = dy / distance
-                        end
-
-                        local dot = (ball.vx * nx) + (ball.vy * ny)
-                        if dot < 0 then
-                            ball.vx = ball.vx - (2 * dot * nx)
-                            ball.vy = ball.vy - (2 * dot * ny)
-                        else
-                            ball.vx = ball.vx + (nx * 80)
-                            ball.vy = ball.vy + (ny * 80)
-                        end
-
-                        local speed = math.sqrt((ball.vx * ball.vx) + (ball.vy * ball.vy))
-                        if speed < (GAME_LAUNCH_SPEED * 0.7) then
-                            local multiplier = (GAME_LAUNCH_SPEED * 0.7) / math.max(speed, 1)
-                            ball.vx = ball.vx * multiplier
-                            ball.vy = ball.vy * multiplier
-                        end
-
-                        ball.x = peg.x + (nx * (minimumDistance + 1))
-                        ball.y = peg.y + (ny * (minimumDistance + 1))
-                        ball.collisionCooldown = GAME_COLLISION_COOLDOWN
-
-                        SetPegHit(peg)
-                        game.pegsRemaining = game.pegsRemaining - 1
-                        if peg.isOrange then
-                            game.orangeLeft = game.orangeLeft - 1
-                            game.peggleScore = game.peggleScore + GAME_SCORE_PER_ORANGE_PEG
-                        else
-                            game.peggleScore = game.peggleScore + GAME_SCORE_PER_PEG
-                        end
-
-                        UpdatePeggleInfo("Peg smashed. Keep shooting until the requested skills land.")
-                        break
-                    end
-                end
+        local peg = select(2, AdvancePegglePhysics(ball, step, game.pegs))
+        if peg then
+            SetPegHit(peg)
+            game.pegsRemaining = game.pegsRemaining - 1
+            if peg.isOrange then
+                game.orangeLeft = game.orangeLeft - 1
+                game.peggleScore = game.peggleScore + GAME_SCORE_PER_ORANGE_PEG
+            else
+                game.peggleScore = game.peggleScore + GAME_SCORE_PER_PEG
             end
+
+            UpdatePeggleInfo("Peg smashed. Keep shooting until the requested skills land.")
         end
 
         if ball.y > (GAME_BOARD_HEIGHT + GAME_BALL_RADIUS + 4) then
