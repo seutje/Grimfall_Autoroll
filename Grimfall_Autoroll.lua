@@ -16,6 +16,8 @@ local GAME_GRAVITY = 520
 local GAME_MAX_STEP = 0.02
 local GAME_COLLISION_COOLDOWN = 0.05
 local GAME_MIN_ORANGE = 5
+local GAME_SCORE_PER_PEG = 10
+local GAME_SCORE_PER_ORANGE_PEG = 100
 
 local GFAR = CreateFrame("Frame", "GFAR_EventFrame")
 GFAR:RegisterEvent("ADDON_LOADED")
@@ -41,6 +43,8 @@ GFAR.game = {
     aimY = 84,
     pegsRemaining = 0,
     orangeLeft = 0,
+    rollsTaken = 0,
+    peggleScore = 0,
     boardEnabled = false,
     refreshElapsed = 0,
     ball = {
@@ -714,6 +718,12 @@ local function SetPegHit(peg)
     end
 end
 
+local function ResetPeggleScore(message)
+    GFAR.game.rollsTaken = 0
+    GFAR.game.peggleScore = 0
+    UpdatePeggleInfo(message or "Roll counter and Peggle score reset.")
+end
+
 UpdatePeggleInfo = function(message)
     if not GFAR.courseText then
         return
@@ -722,6 +732,10 @@ UpdatePeggleInfo = function(message)
     local game = GFAR.game
     local summary = string.format("Course %d | Orange %d | Pegs %d", game.level, game.orangeLeft, game.pegsRemaining)
     GFAR.courseText:SetText(summary)
+
+    if GFAR.scoreText then
+        GFAR.scoreText:SetText(string.format("Rolls %d | Score %d", game.rollsTaken, game.peggleScore))
+    end
 
     if GFAR.courseHintText then
         GFAR.courseHintText:SetText(message or "Aim with the cursor and click the board to shoot Destiny's Dice.")
@@ -825,6 +839,9 @@ local function UpdatePeggleBall(elapsed)
                         game.pegsRemaining = game.pegsRemaining - 1
                         if peg.isOrange then
                             game.orangeLeft = game.orangeLeft - 1
+                            game.peggleScore = game.peggleScore + GAME_SCORE_PER_ORANGE_PEG
+                        else
+                            game.peggleScore = game.peggleScore + GAME_SCORE_PER_PEG
                         end
 
                         UpdatePeggleInfo("Peg smashed. Keep shooting until the requested skills land.")
@@ -983,6 +1000,7 @@ StartPeggleShot = function()
     game.ball.vx = (dx / distance) * GAME_LAUNCH_SPEED
     game.ball.vy = (dy / distance) * GAME_LAUNCH_SPEED
     game.ball.collisionCooldown = 0
+    game.rollsTaken = game.rollsTaken + 1
 
     SetBallPosition(board, game.ball)
     board.ballGlow:Show()
@@ -1549,8 +1567,13 @@ local function CreateMainFrame()
     frame.courseText:SetWidth(332)
     frame.courseText:SetJustifyH("LEFT")
 
+    frame.scoreText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.scoreText:SetPoint("TOPLEFT", frame.courseText, "BOTTOMLEFT", 0, -4)
+    frame.scoreText:SetWidth(332)
+    frame.scoreText:SetJustifyH("LEFT")
+
     frame.courseHintText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.courseHintText:SetPoint("TOPLEFT", frame.courseText, "BOTTOMLEFT", 0, -4)
+    frame.courseHintText:SetPoint("TOPLEFT", frame.scoreText, "BOTTOMLEFT", 0, -4)
     frame.courseHintText:SetWidth(332)
     frame.courseHintText:SetHeight(22)
     frame.courseHintText:SetJustifyH("LEFT")
@@ -1595,11 +1618,21 @@ local function CreateMainFrame()
         GeneratePeggleLevel(GFAR.game.level + 1)
     end)
 
+    frame.resetScoreButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.resetScoreButton:SetWidth(120)
+    frame.resetScoreButton:SetHeight(24)
+    frame.resetScoreButton:SetPoint("LEFT", frame.newCourseButton, "RIGHT", 8, 0)
+    frame.resetScoreButton:SetText("Reset Score")
+    frame.resetScoreButton:SetScript("OnClick", function()
+        ResetPeggleScore()
+    end)
+
     GFAR.mainFrame = frame
     GFAR.statusText = frame.statusText
     GFAR.matchText = frame.matchText
     GFAR.boardPromptText = frame.boardPromptText
     GFAR.courseText = frame.courseText
+    GFAR.scoreText = frame.scoreText
     GFAR.courseHintText = frame.courseHintText
 
     GeneratePeggleLevel(1)
