@@ -9,7 +9,7 @@ local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local CIRCLE_TEXTURE = "Interface\\AddOns\\Grimfall_Autoroll\\Media\\circle.tga"
 local GAME_BOARD_WIDTH = 332
 local GAME_BOARD_HEIGHT = 222
-local GAME_PEG_RADIUS = 5
+local GAME_PEG_RADIUS = 8.6667
 local GAME_BALL_RADIUS = 4
 local GAME_LAUNCH_SPEED = 350
 local GAME_GRAVITY = 520
@@ -54,6 +54,7 @@ GFAR.game = {
         vx = 0,
         vy = 0,
         collisionCooldown = 0,
+        stepAccumulator = 0,
     },
 }
 
@@ -529,19 +530,19 @@ local function AcquirePegVisual(board, index)
 
     visual.glow = board:CreateTexture(nil, "BACKGROUND")
     visual.glow:SetTexture(CIRCLE_TEXTURE)
-    visual.glow:SetWidth(13)
-    visual.glow:SetHeight(13)
+    visual.glow:SetWidth(17.3333)
+    visual.glow:SetHeight(17.3333)
     visual.glow:SetBlendMode("ADD")
 
     visual.core = board:CreateTexture(nil, "ARTWORK")
     visual.core:SetTexture(CIRCLE_TEXTURE)
-    visual.core:SetWidth(7)
-    visual.core:SetHeight(7)
+    visual.core:SetWidth(9.3333)
+    visual.core:SetHeight(9.3333)
 
     visual.highlight = board:CreateTexture(nil, "OVERLAY")
     visual.highlight:SetTexture(CIRCLE_TEXTURE)
-    visual.highlight:SetWidth(3)
-    visual.highlight:SetHeight(3)
+    visual.highlight:SetWidth(4)
+    visual.highlight:SetHeight(4)
     visual.highlight:SetVertexColor(1, 1, 1, 0.9)
 
     board.pegPool[index] = visual
@@ -769,6 +770,7 @@ end
 local function StopPeggleBall(message)
     local game = GFAR.game
     game.ball.active = false
+    game.ball.stepAccumulator = 0
     GFAR.gameBoard.ballTexture:Hide()
     GFAR.gameBoard.ballGlow:Hide()
     GFAR.gameBoard.ballSpark:Hide()
@@ -791,16 +793,12 @@ local function UpdatePeggleBall(elapsed)
         return
     end
 
-    local remaining = elapsed
+    ball.stepAccumulator = math.min(ball.stepAccumulator + elapsed, GAME_PHYSICS_STEP * 4)
 
-    while remaining > 0 do
-        local step = remaining
-        if step > GAME_PHYSICS_STEP then
-            step = GAME_PHYSICS_STEP
-        end
-        remaining = remaining - step
+    while ball.stepAccumulator >= GAME_PHYSICS_STEP do
+        ball.stepAccumulator = ball.stepAccumulator - GAME_PHYSICS_STEP
 
-        local peg = select(2, AdvancePegglePhysics(ball, step, game.pegs))
+        local peg = select(2, AdvancePegglePhysics(ball, GAME_PHYSICS_STEP, game.pegs))
         if peg then
             SetPegHit(peg)
             game.pegsRemaining = game.pegsRemaining - 1
@@ -963,6 +961,7 @@ StartPeggleShot = function()
     game.ball.vx = (dx / distance) * GAME_LAUNCH_SPEED
     game.ball.vy = (dy / distance) * GAME_LAUNCH_SPEED
     game.ball.collisionCooldown = 0
+    game.ball.stepAccumulator = 0
     game.rollsTaken = game.rollsTaken + 1
 
     SetBallPosition(board, game.ball)
@@ -1413,16 +1412,16 @@ CreatePeggleBoard = function(parent)
 
     board.ballGlow = board:CreateTexture(nil, "OVERLAY")
     board.ballGlow:SetTexture(CIRCLE_TEXTURE)
-    board.ballGlow:SetWidth(10)
-    board.ballGlow:SetHeight(10)
+    board.ballGlow:SetWidth((GAME_BALL_RADIUS * 2) + 2)
+    board.ballGlow:SetHeight((GAME_BALL_RADIUS * 2) + 2)
     board.ballGlow:SetBlendMode("ADD")
     board.ballGlow:SetVertexColor(1, 1, 1, 0.38)
     board.ballGlow:Hide()
 
     board.ballTexture = board:CreateTexture(nil, "OVERLAY")
     board.ballTexture:SetTexture(CIRCLE_TEXTURE)
-    board.ballTexture:SetWidth(6)
-    board.ballTexture:SetHeight(6)
+    board.ballTexture:SetWidth(GAME_BALL_RADIUS * 2)
+    board.ballTexture:SetHeight(GAME_BALL_RADIUS * 2)
     board.ballTexture:SetVertexColor(1, 1, 1, 1)
     board.ballTexture:Hide()
 
