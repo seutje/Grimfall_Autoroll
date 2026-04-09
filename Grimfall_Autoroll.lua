@@ -16,6 +16,8 @@ local GAME_GRAVITY = 520
 local GAME_PHYSICS_STEP = 0.015
 local GAME_COLLISION_COOLDOWN = 0.05
 local GAME_MIN_ORANGE = 5
+local GAME_MIN_GREEN = 1
+local GAME_MAX_GREEN = 10
 local GAME_SCORE_PER_PEG = 10
 local GAME_SCORE_PER_ORANGE_PEG = 100
 
@@ -43,19 +45,12 @@ GFAR.game = {
     aimY = 84,
     pegsRemaining = 0,
     orangeLeft = 0,
+    greenLeft = 0,
     rollsTaken = 0,
     peggleScore = 0,
     boardEnabled = false,
     refreshElapsed = 0,
-    ball = {
-        active = false,
-        x = GAME_BOARD_WIDTH * 0.5,
-        y = 18,
-        vx = 0,
-        vy = 0,
-        collisionCooldown = 0,
-        stepAccumulator = 0,
-    },
+    balls = {},
 }
 
 local defaults = {
@@ -79,6 +74,7 @@ local GeneratePeggleLevel
 local UpdatePeggleInfo
 local UpdatePeggleAim
 local StartPeggleShot
+local HasActiveBalls
 
 local function Print(message)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99GFAR|r: " .. message)
@@ -105,6 +101,12 @@ local function Clamp(value, minimum, maximum)
     end
 
     return value
+end
+
+local function RotateVector(x, y, angle)
+    local cosAngle = math.cos(angle)
+    local sinAngle = math.sin(angle)
+    return (x * cosAngle) - (y * sinAngle), (x * sinAngle) + (y * cosAngle)
 end
 
 local function Atan2(y, x)
@@ -428,6 +430,10 @@ local function RefreshAbilitySlots()
     end
 end
 
+HasActiveBalls = function(game)
+    return game and #game.balls > 0
+end
+
 local function UpdateButtonState()
     if not GFAR.gameBoard then
         return
@@ -444,7 +450,7 @@ local function UpdateButtonState()
         message = "All requested abilities are already active. No shot needed."
     elseif not bag or not slot then
         message = "Destiny's Dice is missing from your bags."
-    elseif GFAR.game.ball.active then
+    elseif HasActiveBalls(GFAR.game) then
         message = "Ball in play. Wait for it to drain before clicking again."
     elseif IsDiceOnCooldown() then
         message = "Destiny's Dice is on cooldown."
@@ -507,8 +513,12 @@ local function SetBoardRegionPoint(board, region, x, y)
     region:SetPoint("CENTER", board, "TOPLEFT", x, -y)
 end
 
-local function GetPegColor(isOrange)
-    if isOrange then
+local function GetPegColor(peg)
+    if peg.isGreen then
+        return 0.2, 0.92, 0.35
+    end
+
+    if peg.isOrange then
         return 1.0, 0.48, 0.12
     end
 
@@ -551,7 +561,7 @@ end
 
 local function SetPegVisual(board, peg, index)
     local visual = AcquirePegVisual(board, index)
-    local red, green, blue = GetPegColor(peg.isOrange)
+    local red, green, blue = GetPegColor(peg)
 
     peg.visual = visual
     SetBoardRegionPoint(board, visual.glow, peg.x, peg.y)
@@ -571,10 +581,164 @@ local function HideAllPegVisuals(board)
     end
 end
 
-local function SetBallPosition(board, ball)
-    SetBoardRegionPoint(board, board.ballGlow, ball.x, ball.y)
-    SetBoardRegionPoint(board, board.ballTexture, ball.x, ball.y)
-    SetBoardRegionPoint(board, board.ballSpark, ball.x - 3, ball.y - 3)
+local function HideBallVisual(visual)
+    visual.glow:Hide()
+    visual.core:Hide()
+    visual.spark:Hide()
+end
+
+local function AcquireBallVisual(board, index)
+    if board.ballPool[index] then
+        return board.ballPool[index]
+    end
+
+    local visual = {}
+
+    visual.glow = board:CreateTexture(nil, "OVERLAY")
+    visual.glow:SetTexture(CIRCLE_TEXTURE)
+    visual.glow:SetWidth((GAME_BALL_RADIUS * 2) + 2)
+    visual.glow:SetHeight((GAME_BALL_RADIUS * 2) + 2)
+    visual.glow:SetBlendMode("ADD")
+
+    visual.core = board:CreateTexture(nil, "OVERLAY")
+    visual.core:SetTexture(CIRCLE_TEXTURE)
+    visual.core:SetWidth(GAME_BALL_RADIUS * 2)
+    visual.core:SetHeight(GAME_BALL_RADIUS * 2)
+
+    visual.spark = board:CreateTexture(nil, "OVERLAY")
+    visual.spark:SetTexture(CIRCLE_TEXTURE)
+    visual.spark:SetWidth(2)
+    visual.spark:SetHeight(2)
+
+    board.ballPool[index] = visual
+    return visual
+end
+
+local function SetBallVisualColor(visual, ball)
+    if ball.isFlame then
+        visual.glow:SetVertexColor(1, 0.18, 0.18, 0.65)
+        visual.core:SetVertexColor(1, 0.1, 0.1, 1)
+        visual.spark:SetVertexColor(1, 0.78, 0.78, 1)
+        return
+    end
+
+    if (ball.bottomBounceCharges or 0) > 0 then
+        visual.glow:SetVertexColor(0.35, 1, 0.55, 0.45)
+        visual.core:SetVertexColor(0.82, 1, 0.88, 1)
+        visual.spark:SetVertexColor(1, 1, 1, 1)
+        return
+    end
+
+    visual.glow:SetVertexColor(1, 1, 1, 0.38)
+    visual.core:SetVertexColor(1, 1, 1, 1)
+    visual.spark:SetVertexColor(1, 0.95, 0.65, 0.9)
+end
+
+local function SetBallPosition(board, ball, index)
+    local visual = AcquireBallVisual(board, index)
+    SetBallVisualColor(visual, ball)
+    SetBoardRegionPoint(board, visual.glow, ball.x, ball.y)
+    SetBoardRegionPoint(board, visual.core, ball.x, ball.y)
+    SetBoardRegionPoint(board, visual.spark, ball.x - 3, ball.y - 3)
+    visual.glow:Show()
+    visual.core:Show()
+    visual.spark:Show()
+end
+
+local function HideUnusedBallVisuals(board, activeCount)
+    for index = activeCount + 1, #board.ballPool do
+        HideBallVisual(board.ballPool[index])
+    end
+end
+
+local function HideAllBallVisuals(board)
+    HideUnusedBallVisuals(board, 0)
+end
+
+local function HasInvulnerabilityCharge(game)
+    if not game then
+        return false
+    end
+
+    for _, ball in ipairs(game.balls) do
+        if (ball.bottomBounceCharges or 0) > 0 then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function UpdateDrainIndicator(board, game)
+    if not board or not board.drainIndicatorGlow or not board.drainIndicatorLine then
+        return
+    end
+
+    if HasInvulnerabilityCharge(game) then
+        board.drainIndicatorGlow:Show()
+        board.drainIndicatorLine:Show()
+        return
+    end
+
+    board.drainIndicatorGlow:Hide()
+    board.drainIndicatorLine:Hide()
+end
+
+local function CreateBallState(x, y, vx, vy)
+    return {
+        x = x,
+        y = y,
+        vx = vx,
+        vy = vy,
+        collisionCooldown = 0,
+        stepAccumulator = 0,
+        bottomBounceCharges = 0,
+        isFlame = false,
+    }
+end
+
+local function SpawnSplitBall(game, sourceBall)
+    local splitAngle = math.rad(18)
+    local newBall = CreateBallState(sourceBall.x, sourceBall.y, sourceBall.vx, sourceBall.vy)
+
+    newBall.collisionCooldown = sourceBall.collisionCooldown
+    newBall.stepAccumulator = sourceBall.stepAccumulator
+    newBall.bottomBounceCharges = sourceBall.bottomBounceCharges or 0
+    newBall.isFlame = sourceBall.isFlame
+
+    sourceBall.vx, sourceBall.vy = RotateVector(sourceBall.vx, sourceBall.vy, -splitAngle)
+    newBall.vx, newBall.vy = RotateVector(newBall.vx, newBall.vy, splitAngle)
+    table.insert(game.balls, newBall)
+end
+
+local function ChooseRandomPowerup()
+    local roll = math.random(1, 3)
+    if roll == 1 then
+        return "double"
+    end
+
+    if roll == 2 then
+        return "invulnerability"
+    end
+
+    return "flame"
+end
+
+local function ActivateGreenPegPowerup(game, ball)
+    local powerup = ChooseRandomPowerup()
+
+    if powerup == "double" then
+        SpawnSplitBall(game, ball)
+        return "Green peg hit: Multiball activated."
+    end
+
+    if powerup == "invulnerability" then
+        ball.bottomBounceCharges = (ball.bottomBounceCharges or 0) + 1
+        return "Green peg hit: Invulnerability activated. The ball can bounce off the drain once."
+    end
+
+    ball.isFlame = true
+    return "Green peg hit: Flame ball activated. It now blasts through pegs."
 end
 
 local function HideAimPreview(board)
@@ -618,6 +782,11 @@ local function AdvancePegglePhysics(state, step, pegs)
             local distanceSquared = (dx * dx) + (dy * dy)
 
             if distanceSquared <= (minimumDistance * minimumDistance) then
+                if state.isFlame then
+                    state.collisionCooldown = GAME_COLLISION_COOLDOWN
+                    return bounceCount, peg
+                end
+
                 local distance = math.sqrt(distanceSquared)
                 local nx
                 local ny
@@ -676,7 +845,7 @@ local function UpdateAimPreview(board)
     local collisionCooldown = 0
     local stepState = {}
 
-    if GFAR.game.ball.active then
+    if HasActiveBalls(GFAR.game) then
         HideAimPreview(board)
         return
     end
@@ -755,7 +924,7 @@ UpdatePeggleInfo = function(message)
     end
 
     local game = GFAR.game
-    local summary = string.format("Course %d | Orange %d | Pegs %d", game.level, game.orangeLeft, game.pegsRemaining)
+    local summary = string.format("Course %d | Orange %d | Green %d | Pegs %d", game.level, game.orangeLeft, game.greenLeft, game.pegsRemaining)
     GFAR.courseText:SetText(summary)
 
     if GFAR.scoreText then
@@ -769,11 +938,9 @@ end
 
 local function StopPeggleBall(message)
     local game = GFAR.game
-    game.ball.active = false
-    game.ball.stepAccumulator = 0
-    GFAR.gameBoard.ballTexture:Hide()
-    GFAR.gameBoard.ballGlow:Hide()
-    GFAR.gameBoard.ballSpark:Hide()
+    wipe(game.balls)
+    HideAllBallVisuals(GFAR.gameBoard)
+    UpdateDrainIndicator(GFAR.gameBoard, game)
 
     if game.orangeLeft <= 0 or game.pegsRemaining <= 0 then
         GeneratePeggleLevel(game.level + 1)
@@ -787,38 +954,74 @@ end
 local function UpdatePeggleBall(elapsed)
     local board = GFAR.gameBoard
     local game = GFAR.game
-    local ball = game.ball
+    local message
 
-    if not board or not ball.active then
+    if not board or not HasActiveBalls(game) then
         return
     end
 
-    ball.stepAccumulator = math.min(ball.stepAccumulator + elapsed, GAME_PHYSICS_STEP * 4)
+    local ballIndex = 1
+    while ballIndex <= #game.balls do
+        local ball = game.balls[ballIndex]
+        local drained = false
 
-    while ball.stepAccumulator >= GAME_PHYSICS_STEP do
-        ball.stepAccumulator = ball.stepAccumulator - GAME_PHYSICS_STEP
+        ball.stepAccumulator = math.min(ball.stepAccumulator + elapsed, GAME_PHYSICS_STEP * 4)
 
-        local peg = select(2, AdvancePegglePhysics(ball, GAME_PHYSICS_STEP, game.pegs))
-        if peg then
-            SetPegHit(peg)
-            game.pegsRemaining = game.pegsRemaining - 1
-            if peg.isOrange then
-                game.orangeLeft = game.orangeLeft - 1
-                game.peggleScore = game.peggleScore + GAME_SCORE_PER_ORANGE_PEG
-            else
-                game.peggleScore = game.peggleScore + GAME_SCORE_PER_PEG
+        while ball.stepAccumulator >= GAME_PHYSICS_STEP do
+            ball.stepAccumulator = ball.stepAccumulator - GAME_PHYSICS_STEP
+
+            local peg = select(2, AdvancePegglePhysics(ball, GAME_PHYSICS_STEP, game.pegs))
+            if peg then
+                SetPegHit(peg)
+                game.pegsRemaining = game.pegsRemaining - 1
+                if peg.isOrange then
+                    game.orangeLeft = game.orangeLeft - 1
+                    game.peggleScore = game.peggleScore + GAME_SCORE_PER_ORANGE_PEG
+                else
+                    game.peggleScore = game.peggleScore + GAME_SCORE_PER_PEG
+                end
+
+                if peg.isGreen then
+                    game.greenLeft = game.greenLeft - 1
+                    message = ActivateGreenPegPowerup(game, ball)
+                else
+                    message = "Peg smashed. Keep shooting until the requested skills land."
+                end
             end
 
-            UpdatePeggleInfo("Peg smashed. Keep shooting until the requested skills land.")
+            if ball.y > (GAME_BOARD_HEIGHT + GAME_BALL_RADIUS + 4) then
+                if (ball.bottomBounceCharges or 0) > 0 then
+                    ball.bottomBounceCharges = ball.bottomBounceCharges - 1
+                    ball.y = GAME_BOARD_HEIGHT - GAME_BALL_RADIUS
+                    ball.vy = -math.abs(ball.vy)
+                    ball.collisionCooldown = 0
+                    message = "Invulnerability triggered. The ball bounced back into play."
+                else
+                    drained = true
+                    break
+                end
+            end
         end
 
-        if ball.y > (GAME_BOARD_HEIGHT + GAME_BALL_RADIUS + 4) then
-            StopPeggleBall()
-            return
+        if drained then
+            table.remove(game.balls, ballIndex)
+        else
+            SetBallPosition(board, ball, ballIndex)
+            ballIndex = ballIndex + 1
         end
     end
 
-    SetBallPosition(board, ball)
+    HideUnusedBallVisuals(board, #game.balls)
+    UpdateDrainIndicator(board, game)
+
+    if not HasActiveBalls(game) then
+        StopPeggleBall()
+        return
+    end
+
+    if message then
+        UpdatePeggleInfo(message)
+    end
 end
 
 UpdatePeggleAim = function(board)
@@ -845,6 +1048,7 @@ end
 local function BuildFallbackPegRow(board, level, startIndex)
     local game = GFAR.game
     local step = (GAME_BOARD_WIDTH - 72) / 5
+    local orangeAdded = 0
 
     for column = 0, 5 do
         local pegIndex = startIndex + column
@@ -852,12 +1056,18 @@ local function BuildFallbackPegRow(board, level, startIndex)
             x = 36 + (column * step),
             y = 118 + ((Noise(level, pegIndex, 14) - 0.5) * 18),
             isOrange = column == 1 or column == 4,
+            isGreen = false,
             hit = false,
         }
 
+        if peg.isOrange then
+            orangeAdded = orangeAdded + 1
+        end
+
         table.insert(game.pegs, peg)
-        SetPegVisual(board, peg, #game.pegs)
     end
+
+    return orangeAdded
 end
 
 GeneratePeggleLevel = function(level)
@@ -869,14 +1079,16 @@ GeneratePeggleLevel = function(level)
     local game = GFAR.game
     local rowCount = 5 + math.floor(Noise(level, 1, 1) * 3)
     local orangeAssigned = 0
+    local greenAssigned = 0
+    local greenCandidates = {}
+    local greenTarget = 0
 
     HideAllPegVisuals(board)
     wipe(game.pegs)
+    wipe(game.balls)
     game.level = level
-    game.ball.active = false
-    board.ballTexture:Hide()
-    board.ballGlow:Hide()
-    board.ballSpark:Hide()
+    HideAllBallVisuals(board)
+    UpdateDrainIndicator(board, game)
 
     for row = 1, rowCount do
         local columns = 5 + math.floor(Noise(level, row, 2) * 4)
@@ -892,6 +1104,7 @@ GeneratePeggleLevel = function(level)
                     x = Clamp(26 + ((column - 1) * step) + rowShift + ((Noise(level, (row * 100) + column, 5) - 0.5) * 18), 20, GAME_BOARD_WIDTH - 20),
                     y = Clamp(rowY + ((Noise(level, (row * 100) + column, 6) - 0.5) * 16), 54, GAME_BOARD_HEIGHT - 18),
                     isOrange = Noise(level, (row * 100) + column, 7) > 0.7,
+                    isGreen = false,
                     hit = false,
                 }
 
@@ -905,7 +1118,7 @@ GeneratePeggleLevel = function(level)
     end
 
     if #game.pegs < 15 then
-        BuildFallbackPegRow(board, level, #game.pegs + 1)
+        orangeAssigned = orangeAssigned + BuildFallbackPegRow(board, level, #game.pegs + 1)
     end
 
     if orangeAssigned < GAME_MIN_ORANGE then
@@ -922,14 +1135,58 @@ GeneratePeggleLevel = function(level)
     end
 
     for pegIndex, peg in ipairs(game.pegs) do
+        if not peg.isOrange then
+            table.insert(greenCandidates, {
+                index = pegIndex,
+                roll = Noise(level, pegIndex, 9),
+            })
+        end
+    end
+
+    table.sort(greenCandidates, function(left, right)
+        if left.roll == right.roll then
+            return left.index < right.index
+        end
+
+        return left.roll > right.roll
+    end)
+
+    greenTarget = Clamp(1 + math.floor(Noise(level, 1, 10) * GAME_MAX_GREEN), GAME_MIN_GREEN, GAME_MAX_GREEN)
+    greenTarget = math.min(greenTarget, #greenCandidates)
+
+    for candidateIndex = 1, greenTarget do
+        local pegIndex = greenCandidates[candidateIndex].index
+        game.pegs[pegIndex].isGreen = true
+        greenAssigned = greenAssigned + 1
+    end
+
+    if orangeAssigned < GAME_MIN_ORANGE then
+        for pegIndex, peg in ipairs(game.pegs) do
+            if orangeAssigned >= GAME_MIN_ORANGE then
+                break
+            end
+
+            if not peg.isOrange and not peg.isGreen then
+                peg.isOrange = true
+                orangeAssigned = orangeAssigned + 1
+            end
+        end
+    end
+
+    for pegIndex, peg in ipairs(game.pegs) do
         SetPegVisual(board, peg, pegIndex)
     end
 
     game.pegsRemaining = #game.pegs
     game.orangeLeft = 0
+    game.greenLeft = 0
     for _, peg in ipairs(game.pegs) do
         if peg.isOrange then
             game.orangeLeft = game.orangeLeft + 1
+        end
+
+        if peg.isGreen then
+            game.greenLeft = game.greenLeft + 1
         end
     end
 
@@ -942,7 +1199,7 @@ StartPeggleShot = function()
     local board = GFAR.gameBoard
     local game = GFAR.game
 
-    if not board or game.ball.active or not game.boardEnabled then
+    if not board or HasActiveBalls(game) or not game.boardEnabled then
         return
     end
 
@@ -955,19 +1212,17 @@ StartPeggleShot = function()
         distance = 1
     end
 
-    game.ball.active = true
-    game.ball.x = spawnX
-    game.ball.y = spawnY
-    game.ball.vx = (dx / distance) * GAME_LAUNCH_SPEED
-    game.ball.vy = (dy / distance) * GAME_LAUNCH_SPEED
-    game.ball.collisionCooldown = 0
-    game.ball.stepAccumulator = 0
+    wipe(game.balls)
+    table.insert(game.balls, CreateBallState(
+        spawnX,
+        spawnY,
+        (dx / distance) * GAME_LAUNCH_SPEED,
+        (dy / distance) * GAME_LAUNCH_SPEED
+    ))
     game.rollsTaken = game.rollsTaken + 1
 
-    SetBallPosition(board, game.ball)
-    board.ballGlow:Show()
-    board.ballTexture:Show()
-    board.ballSpark:Show()
+    SetBallPosition(board, game.balls[1], 1)
+    HideUnusedBallVisuals(board, 1)
     HideAimPreview(board)
 
     UpdatePeggleInfo("Ball in play. The click also consumed Destiny's Dice.")
@@ -1352,6 +1607,7 @@ CreatePeggleBoard = function(parent)
     board:SetAttribute("type", "item")
     board:SetAttribute("item", "item:" .. ITEM_ID)
     board.pegPool = {}
+    board.ballPool = {}
 
     board.gridLineHorizontal = board:CreateTexture(nil, "BACKGROUND")
     board.gridLineHorizontal:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -1366,6 +1622,22 @@ CreatePeggleBoard = function(parent)
     board.gridLineVertical:SetPoint("TOP", board, "TOP", 0, -18)
     board.gridLineVertical:SetPoint("BOTTOM", board, "BOTTOM", 0, 18)
     board.gridLineVertical:SetWidth(1)
+
+    board.drainIndicatorGlow = board:CreateTexture(nil, "BACKGROUND")
+    board.drainIndicatorGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.drainIndicatorGlow:SetPoint("BOTTOMLEFT", board, "BOTTOMLEFT", 12, 10)
+    board.drainIndicatorGlow:SetPoint("BOTTOMRIGHT", board, "BOTTOMRIGHT", -12, 10)
+    board.drainIndicatorGlow:SetHeight(10)
+    board.drainIndicatorGlow:SetVertexColor(0.28, 1.0, 0.52, 0.2)
+    board.drainIndicatorGlow:Hide()
+
+    board.drainIndicatorLine = board:CreateTexture(nil, "ARTWORK")
+    board.drainIndicatorLine:SetTexture("Interface\\Buttons\\WHITE8x8")
+    board.drainIndicatorLine:SetPoint("BOTTOMLEFT", board, "BOTTOMLEFT", 16, 13)
+    board.drainIndicatorLine:SetPoint("BOTTOMRIGHT", board, "BOTTOMRIGHT", -16, 13)
+    board.drainIndicatorLine:SetHeight(3)
+    board.drainIndicatorLine:SetVertexColor(0.7, 1.0, 0.8, 0.95)
+    board.drainIndicatorLine:Hide()
 
     board.launchPadGlow = board:CreateTexture(nil, "ARTWORK")
     board.launchPadGlow:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -1410,34 +1682,13 @@ CreatePeggleBoard = function(parent)
         board.aimDots[dotIndex] = dot
     end
 
-    board.ballGlow = board:CreateTexture(nil, "OVERLAY")
-    board.ballGlow:SetTexture(CIRCLE_TEXTURE)
-    board.ballGlow:SetWidth((GAME_BALL_RADIUS * 2) + 2)
-    board.ballGlow:SetHeight((GAME_BALL_RADIUS * 2) + 2)
-    board.ballGlow:SetBlendMode("ADD")
-    board.ballGlow:SetVertexColor(1, 1, 1, 0.38)
-    board.ballGlow:Hide()
-
-    board.ballTexture = board:CreateTexture(nil, "OVERLAY")
-    board.ballTexture:SetTexture(CIRCLE_TEXTURE)
-    board.ballTexture:SetWidth(GAME_BALL_RADIUS * 2)
-    board.ballTexture:SetHeight(GAME_BALL_RADIUS * 2)
-    board.ballTexture:SetVertexColor(1, 1, 1, 1)
-    board.ballTexture:Hide()
-
-    board.ballSpark = board:CreateTexture(nil, "OVERLAY")
-    board.ballSpark:SetTexture(CIRCLE_TEXTURE)
-    board.ballSpark:SetWidth(2)
-    board.ballSpark:SetHeight(2)
-    board.ballSpark:SetVertexColor(1, 0.95, 0.65, 0.9)
-    board.ballSpark:Hide()
-
     board:SetScript("OnEnter", function(self)
         UpdatePeggleAim(self)
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Autoroll Peggle", 1, 1, 1)
         GameTooltip:AddLine("Click the board to launch a ball and use Destiny's Dice.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Green pegs trigger a random powerup: multiball, a one-time drain bounce, or flame ball.", 0.65, 0.95, 0.7, true)
         GameTooltip:AddLine("Procedural layouts refresh when you clear a course or click New Course.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
@@ -1454,7 +1705,7 @@ CreatePeggleBoard = function(parent)
             end
         end
 
-        if self:IsMouseOver() and not GFAR.game.ball.active then
+        if self:IsMouseOver() and not HasActiveBalls(GFAR.game) then
             UpdatePeggleAim(self)
         end
 
